@@ -1,5 +1,5 @@
-// Loop 0.1.4 — TikTok en Kino: tendencias por país, búsqueda, creadores y
-// enlaces pegados.
+// Loop 0.1.5 — TikTok en Kino: tendencias por país, canales por gusto,
+// búsqueda, creadores y enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
 // sesión y firma cada petición). Este plugin habla con tikwm.com, el
@@ -15,7 +15,12 @@
 //   de lista detrás (el canal continúa solo, desde donde se tocó). La fila
 //   "Canales que corren solos" abre las tendencias de un país como serie,
 //   episodio tras episodio.
-// — Los #hashtags y los @perfiles usan OTRO camino de tikwm que a veces
+// — «Canales por gusto»: doramas, anime, AMV, k-pop y más. Cada uno abre
+//   un canal con los videos de ese #tema — el mismo camino de los
+//   hashtags, que usa la verificación pasada en Ajustes (sin ella, al
+//   abrir uno la app pedirá pasarla; la fila "Doramas de hoy" de la
+//   portada tampoco sale).
+// — Los #hashtags y los @perfiles usan ese camino de tikwm que a veces
 //   pide una verificación (la página de seguridad que no deja pasar). El
 //   botón "Pasar verificación" de Ajustes la pasa UNA VEZ en una ventanita:
 //   la galleta que gana y el disfraz del navegador que la ganó viajan
@@ -25,16 +30,15 @@
 //   se resuelven AL REPRODUCIR y nunca se guardan en caché.
 // — En el buscador se puede pegar cualquier enlace de TikTok (normal, corto
 //   vt.tiktok.com o vm.tiktok.com) y el video se abre directo.
-// — La portada pide sus seis filas de tendencias A LA VEZ, con un
-//   escalonado de un segundo entre una y otra (el plan gratuito de tikwm
-//   acepta más o menos una petición por segundo: pedirlas casi juntas las
-//   negaba TODAS con "Free Api Limit"): pedidas en fila, los seis viajes
-//   de ida y vuelta se sumaban y la app corta la portada a los 20 segundos.
-//   Si tikwm avisa del límite del plan gratuito, se espera y se reintenta
-//   una vez.
+// — La portada pide sus filas A LA VEZ, con un escalonado de un segundo
+//   entre una y otra (el plan gratuito de tikwm acepta más o menos una
+//   petición por segundo: pedirlas casi juntas las negaba TODAS con
+//   "Free Api Limit"): pedidas en fila, los viajes de ida y vuelta se
+//   sumaban y la app corta la portada a los 20 segundos. Si tikwm avisa
+//   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -249,11 +253,11 @@ async function tkTendencias(region, cursor, cantidad, timeoutMs) {
 
 // Búsqueda de #hashtags: el camino que a veces pide verificación; si la
 // persona ya la pasó, la galleta viaja aquí.
-async function tkBuscar(kw, cursor, cantidad) {
+async function tkBuscar(kw, cursor, cantidad, timeoutMs) {
   return tkDatos(
     await pedirJson(BASE + "feed/search?keywords=" + encodeURIComponent(kw) +
       "&count=" + cantidad + "&cursor=" + encodeURIComponent(cursor || "0"),
-      15000, cabecerasVerificadas()),
+      timeoutMs || 15000, cabecerasVerificadas()),
     "búsqueda"
   );
 }
@@ -429,6 +433,18 @@ function serieDeUsuario(uid, d) {
   return item;
 }
 
+// Una "serie" de TikTok: un #tema (anime, doramas, AMV…). Sus episodios son
+// los videos del momento de ese tema, uno tras otro.
+function serieDeTema(titulo, tag) {
+  return {
+    id: "tk.h." + String(tag).replace(/[^a-z0-9]/gi, "").toLowerCase(),
+    ref: "h:" + tag,
+    title: clip(titulo, 90),
+    kind: "series",
+    overview: "Un canal que corre solo: los videos de " + tag + " del momento, uno tras otro."
+  };
+}
+
 // ---------- portada ----------
 
 const REGIONES_PORTADA = [
@@ -446,6 +462,26 @@ const CANALES_PORTADA = [
   { titulo: "Canal México", region: "MX" }
 ];
 
+// La fila de doramas de la portada: va por el camino de los #hashtags
+// (usa la verificación pasada, si la hay). Sin verificación no sale y las
+// tendencias siguen igual.
+const DORAMAS_FILA = { id: "doramas", titulo: "Doramas de hoy", tag: "#doramas", ref: "h:#doramas" };
+
+// Los canales por gusto: cada uno abre el #tema como serie continua. Sin
+// galleta, tocarlos enseña el camino del botón de verificación.
+const TEMAS = [
+  { titulo: "Anime", tag: "#anime" },
+  { titulo: "AMV", tag: "#amv" },
+  { titulo: "Doramas", tag: "#kdrama" },
+  { titulo: "K-pop", tag: "#kpop" },
+  { titulo: "Baile", tag: "#dance" },
+  { titulo: "Memes", tag: "#memes" },
+  { titulo: "Fútbol", tag: "#futbol" },
+  { titulo: "Videojuegos", tag: "#gaming" },
+  { titulo: "Recetas", tag: "#recetas" },
+  { titulo: "Humor", tag: "#humor" }
+];
+
 const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
   { id: "pe", titulo: "Tendencias Perú", region: "PE" },
   { id: "cl", titulo: "Tendencias Chile", region: "CL" }
@@ -454,13 +490,12 @@ const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
 export async function home() {
   const posters = {};
   const progreso = { ok: 0, detalle: [] };
-  // Las seis filas se piden A LA VEZ, con un escalonado de un segundo
-  // entre una y otra (el plan gratuito de tikwm acepta más o menos una
-  // petición por segundo: pedidas casi juntas las negaba TODAS con
-  // "Free Api Limit"): la app corta la portada a los 20 segundos y,
-  // pedidas en fila, los seis viajes de ida y vuelta más las pausas se
-  // pasaban del reloj. Así la portada tarda lo que tarda la última fila,
-  // no la suma de las seis.
+  // Las filas se piden A LA VEZ, con un escalonado de un segundo entre una
+  // y otra (el plan gratuito de tikwm acepta más o menos una petición por
+  // segundo: pedidas casi juntas las negaba TODAS con "Free Api Limit"):
+  // pedidas en fila, los viajes de ida y vuelta se sumaban y la app corta
+  // la portada a los 20 segundos. Así la portada tarda lo que tarda la
+  // última fila, no la suma de las siete.
   const pedidas = [];
   for (let i = 0; i < REGIONES_PORTADA.length; i++) {
     pedidas.push((async function (f, retraso) {
@@ -486,6 +521,26 @@ export async function home() {
       }
     })(REGIONES_PORTADA[i], i * 1100));
   }
+  // La fila de doramas va última en el escalonado (sigue en paralelo con
+  // las demás; solo empieza un segundo después de la última).
+  pedidas.push((async function (f, retraso) {
+    await espera(retraso);
+    try {
+      const d = await tkLlamada("fila doramas", function () {
+        return tkBuscar(f.tag, "0", 18, 6000);
+      });
+      const items = itemsDeVideos(d);
+      if (items.length > 0) progreso.detalle.push("doramas " + items.length);
+      else progreso.detalle.push("doramas vacía");
+      trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
+      return { f: f, items: items };
+    } catch (e) {
+      // Sin verificación pasada (o sin respuesta): la fila no sale.
+      progreso.detalle.push("doramas omitida (falta verificación o respuesta)");
+      trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
+      return { f: f, items: [] };
+    }
+  })(DORAMAS_FILA, REGIONES_PORTADA.length * 1100));
   const filas = await Promise.all(pedidas);
   const salida = [];
   let ok = 0;
@@ -494,14 +549,15 @@ export async function home() {
     const f = r.f;
     if (r.items.length > 0) {
       ok = ok + 1;
-      if (r.items[0].poster) posters[f.region] = r.items[0].poster;
-      guardarLista("r:" + f.region, r.items);
+      const ref = f.region ? "r:" + f.region : f.ref;
+      if (f.region && r.items[0].poster) posters[f.region] = r.items[0].poster;
+      guardarLista(ref, r.items);
       salida.push({
         id: "fila." + f.id,
         title: f.titulo,
         items: r.items,
-        ref: "r:" + f.region,
-        genre: "entretenimiento"
+        ref: ref,
+        genre: f.region ? "entretenimiento" : "drama"
       });
     }
   }
@@ -519,6 +575,16 @@ export async function home() {
       id: "fila.canales",
       title: "Canales que corren solos",
       items: canales,
+      genre: "otros"
+    });
+    const temas = [];
+    for (let i = 0; i < TEMAS.length; i++) {
+      temas.push(serieDeTema(TEMAS[i].titulo, TEMAS[i].tag));
+    }
+    salida.push({
+      id: "fila.temas",
+      title: "Canales por gusto",
+      items: temas,
       genre: "otros"
     });
   }

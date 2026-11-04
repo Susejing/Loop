@@ -2,9 +2,9 @@
   "id": "loop",
   "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "icon": "icon.png",
-  "description": "TikTok en Kino: tendencias por país, búsqueda con hashtags, perfiles de creadores y enlaces pegados. Videos sin marca de agua, para verlos uno tras otro como un canal o tocándolos uno por uno.",
+  "description": "TikTok en Kino: tendencias por país, canales por gusto (doramas, anime, AMV y más), búsqueda, perfiles de creadores y enlaces pegados. Videos sin marca de agua.",
   "apiVersion": 11,
   "entry": "plugin.js",
   "hosts": [
@@ -61,7 +61,7 @@
       "key": "verif",
       "label": "Búsqueda y perfiles",
       "type": "section",
-      "hint": "Los #hashtags y los @perfiles de TikTok a veces piden una verificación de seguridad. Pásala una vez con el botón de abajo; queda guardada unas horas y la búsqueda y los perfiles vuelven a funcionar."
+      "hint": "Los #hashtags y los @perfiles de TikTok a veces piden una verificación de seguridad. Pásala una vez con el botón de abajo; queda guardada unas horas y la búsqueda, los perfiles y los canales por gusto vuelven a funcionar."
     },
     {
       "key": "verificacion",
