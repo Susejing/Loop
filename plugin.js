@@ -723,7 +723,7 @@ export async function browse(ref, cursor) {
       return r;
     } catch (e) {
       if (esVerificacion(e)) throw errorVerificacion("ver más");
-      throw traducirError(e, "TikTok no respondió ahora mismo. Inténtala otra vez en un momento.");
+      throw traducirError(e, "TikTok no respondió ahora mismo. Inténtalo otra vez en un momento.");
     }
   }
 
