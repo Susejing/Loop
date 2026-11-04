@@ -1,4 +1,4 @@
-// Loop 0.1.0 — TikTok en Kino: tendencias, búsqueda, creadores y enlaces pegados.
+// Loop 0.1.1 — TikTok en Kino: tendencias, búsqueda, creadores y enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
 // sesión y firma cada petición). Este plugin habla con tikwm.com, el
@@ -23,7 +23,7 @@
 //   del límite, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
