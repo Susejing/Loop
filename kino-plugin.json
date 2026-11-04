@@ -1,98 +1,44 @@
 {
-  "id": "archive-org",
-  "name": "Internet Archive",
-  "version": "1.4.2",
-  "apiVersion": 3,
-  "entry": "plugin.js",
-  "description": "Películas de dominio público y televisión clásica de archive.org",
-  "author": "kinotvapp",
-  "homepage": "https://github.com/kinotvapp/kino-plugin-archive",
-  "hosts": [
-    "archive.org",
-    "*.archive.org"
-  ],
-  "capabilities": [
-    "search",
-    "home",
-    "browse",
-    "episodes",
-    "resolve",
-    "download"
-  ],
-  "color": "#E0A030",
+  "id": "loop",
+  "name": "Loop — TikTok",
+  "author": "Susejing",
+  "version": "0.1.0",
   "icon": "icon.png",
+  "description": "TikTok en Kino: tendencias por temas, búsqueda con hashtags, perfiles de creadores y enlaces pegados. Videos sin marca de agua, para verlos uno tras otro como un canal o tocándolos uno por uno.",
+  "apiVersion": 11,
+  "entry": "plugin.js",
+  "hosts": [
+    "tikwm.com",
+    "www.tikwm.com",
+    "*.tiktokcdn.com",
+    "*.tiktokcdn-us.com",
+    "*.tiktokv.us",
+    "*.tiktokv.com"
+  ],
+  "capabilities": ["search", "home", "browse", "episodes", "resolve", "scopedSearch"],
   "settings": [
     {
-      "key": "url1",
-      "label": "Dirección 1",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
+      "type": "section",
+      "title": "Reproducción"
     },
     {
-      "key": "cat1",
-      "label": "Categoría 1",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
+      "key": "marca",
+      "type": "select",
+      "title": "Marca de agua",
+      "description": "Los videos se pueden reproducir con la marca de agua de TikTok (como en la app) o sin ella.",
+      "default": "no",
+      "options": [
+        { "value": "no", "label": "Sin marca de agua (recomendado)" },
+        { "value": "si", "label": "Con marca de agua (como en la app)" }
+      ]
     },
     {
-      "key": "url2",
-      "label": "Dirección 2",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat2",
-      "label": "Categoría 2",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url3",
-      "label": "Dirección 3",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat3",
-      "label": "Categoría 3",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url4",
-      "label": "Dirección 4",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat4",
-      "label": "Categoría 4",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url5",
-      "label": "Dirección 5",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat5",
-      "label": "Categoría 5",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url6",
-      "label": "Dirección 6",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat6",
-      "label": "Categoría 6",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
+      "key": "estado",
+      "type": "status",
+      "title": "Estado",
+      "description": "Cómo va el plugin y qué se reprodujo últimamente."
     }
-  ]
+  ],
+  "color": "#FE2C55",
+  "debug": true
 }
