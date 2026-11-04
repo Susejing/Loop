@@ -1,4 +1,4 @@
-// Loop 0.1.3 — TikTok en Kino: tendencias por país, búsqueda, creadores y
+// Loop 0.1.4 — TikTok en Kino: tendencias por país, búsqueda, creadores y
 // enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
@@ -25,14 +25,16 @@
 //   se resuelven AL REPRODUCIR y nunca se guardan en caché.
 // — En el buscador se puede pegar cualquier enlace de TikTok (normal, corto
 //   vt.tiktok.com o vm.tiktok.com) y el video se abre directo.
-// — La portada pide sus seis filas de tendencias A LA VEZ (con un
-//   escalonado corto entre una y otra): pedidas en fila, los seis viajes
+// — La portada pide sus seis filas de tendencias A LA VEZ, con un
+//   escalonado de un segundo entre una y otra (el plan gratuito de tikwm
+//   acepta más o menos una petición por segundo: pedirlas casi juntas las
+//   negaba TODAS con "Free Api Limit"): pedidas en fila, los seis viajes
 //   de ida y vuelta se sumaban y la app corta la portada a los 20 segundos.
 //   Si tikwm avisa del límite del plan gratuito, se espera y se reintenta
 //   una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -267,7 +269,7 @@ async function tkUsuario(uid, cursor, cantidad) {
 }
 
 // La forma de la respuesta de tikwm ha cambiado con el tiempo: la lista
-// puede venir en data.videos, data.list, data.aweme_list o data pelado (las
+// puede venir en data.videos, data.list, data.aweme_list o data pelada (las
 // tendencias). Se prueban todas para que el plugin sobreviva a mudanzas.
 function videosDe(d) {
   if (Array.isArray(d)) return d;
@@ -452,11 +454,13 @@ const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
 export async function home() {
   const posters = {};
   const progreso = { ok: 0, detalle: [] };
-  // Las seis filas se piden A LA VEZ, con un escalonado corto entre una y
-  // otra para no atropellar el plan gratuito de tikwm: la app corta la
-  // portada a los 20 segundos y, pedidas en fila, los seis viajes de ida y
-  // vuelta más las pausas se pasaban del reloj. Así la portada tarda lo que
-  // tarda la fila más lenta, no la suma de las seis.
+  // Las seis filas se piden A LA VEZ, con un escalonado de un segundo
+  // entre una y otra (el plan gratuito de tikwm acepta más o menos una
+  // petición por segundo: pedidas casi juntas las negaba TODAS con
+  // "Free Api Limit"): la app corta la portada a los 20 segundos y,
+  // pedidas en fila, los seis viajes de ida y vuelta más las pausas se
+  // pasaban del reloj. Así la portada tarda lo que tarda la última fila,
+  // no la suma de las seis.
   const pedidas = [];
   for (let i = 0; i < REGIONES_PORTADA.length; i++) {
     pedidas.push((async function (f, retraso) {
@@ -480,7 +484,7 @@ export async function home() {
         trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
         return { f: f, items: [] };
       }
-    })(REGIONES_PORTADA[i], i * 350));
+    })(REGIONES_PORTADA[i], i * 1100));
   }
   const filas = await Promise.all(pedidas);
   const salida = [];

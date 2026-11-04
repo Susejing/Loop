@@ -2,7 +2,7 @@
   "id": "loop",
   "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "icon": "icon.png",
   "description": "TikTok en Kino: tendencias por país, búsqueda con hashtags, perfiles de creadores y enlaces pegados. Videos sin marca de agua, para verlos uno tras otro como un canal o tocándolos uno por uno.",
   "apiVersion": 11,
@@ -15,26 +15,48 @@
     "*.tiktokv.us",
     "*.tiktokv.com"
   ],
-  "capabilities": ["search", "home", "browse", "episodes", "resolve", "scopedSearch"],
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve",
+    "scopedSearch"
+  ],
   "enhancements": {
     "20": {
       "visualBrowser": true
     }
   },
   "settings": [
-    { "key": "reproduccion", "label": "Reproducción", "type": "section", "hint": "Cómo quieres ver los videos de TikTok." },
+    {
+      "key": "reproduccion",
+      "label": "Reproducción",
+      "type": "section",
+      "hint": "Cómo quieres ver los videos de TikTok."
+    },
     {
       "key": "marca",
       "label": "Marca de agua",
       "type": "select",
       "default": "no",
       "options": [
-        { "value": "no", "label": "Sin marca de agua (recomendado)" },
-        { "value": "si", "label": "Con marca de agua (como en la app)" }
+        {
+          "value": "no",
+          "label": "Sin marca de agua (recomendado)"
+        },
+        {
+          "value": "si",
+          "label": "Con marca de agua (como en la app)"
+        }
       ],
       "hint": "Sin marca se ve limpio; con marca queda como en la app de TikTok."
     },
-    { "key": "estado", "label": "Estado", "type": "status" },
+    {
+      "key": "estado",
+      "label": "Estado",
+      "type": "status"
+    },
     {
       "key": "verif",
       "label": "Búsqueda y perfiles",
