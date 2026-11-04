@@ -1,4 +1,4 @@
-// Loop 0.1.2 — TikTok en Kino: tendencias por país, búsqueda, creadores y
+// Loop 0.1.3 — TikTok en Kino: tendencias por país, búsqueda, creadores y
 // enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
@@ -25,12 +25,14 @@
 //   se resuelven AL REPRODUCIR y nunca se guardan en caché.
 // — En el buscador se puede pegar cualquier enlace de TikTok (normal, corto
 //   vt.tiktok.com o vm.tiktok.com) y el video se abre directo.
-// — El plan gratuito de tikwm acepta más o menos una petición por segundo:
-//   la portada hace una pausa corta entre fila y fila, y si tikwm avisa
-//   del límite, se espera y se reintenta una vez.
+// — La portada pide sus seis filas de tendencias A LA VEZ (con un
+//   escalonado corto entre una y otra): pedidas en fila, los seis viajes
+//   de ida y vuelta se sumaban y la app corta la portada a los 20 segundos.
+//   Si tikwm avisa del límite del plan gratuito, se espera y se reintenta
+//   una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -233,11 +235,12 @@ async function tkPorEnlace(enlace) {
 }
 
 // Tendencias de un país: el camino SIN verificación (por eso es la portada).
-async function tkTendencias(region, cursor, cantidad) {
+async function tkTendencias(region, cursor, cantidad, timeoutMs) {
   return tkDatos(
     await pedirJson(BASE + "feed/list?count=" + cantidad +
       "&region=" + encodeURIComponent(region) +
-      "&cursor=" + encodeURIComponent(cursor || "0")),
+      "&cursor=" + encodeURIComponent(cursor || "0"),
+      timeoutMs || 15000),
     "tendencias " + region
   );
 }
@@ -447,37 +450,57 @@ const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
 ]);
 
 export async function home() {
-  const salida = [];
   const posters = {};
-  const detalle = [];
-  let ok = 0;
+  const progreso = { ok: 0, detalle: [] };
+  // Las seis filas se piden A LA VEZ, con un escalonado corto entre una y
+  // otra para no atropellar el plan gratuito de tikwm: la app corta la
+  // portada a los 20 segundos y, pedidas en fila, los seis viajes de ida y
+  // vuelta más las pausas se pasaban del reloj. Así la portada tarda lo que
+  // tarda la fila más lenta, no la suma de las seis.
+  const pedidas = [];
   for (let i = 0; i < REGIONES_PORTADA.length; i++) {
-    const f = REGIONES_PORTADA[i];
-    if (i > 0) await espera(1100); // tikwm gratis: ~1 petición por segundo
-    try {
-      const d = await tkLlamada("portada " + f.region, function () { return tkTendencias(f.region, "0", 18); });
-      const items = itemsDeVideos(d);
-      if (items.length > 0) {
-        ok = ok + 1;
-        detalle.push(f.region + " " + items.length);
-        if (items[0].poster) posters[f.region] = items[0].poster;
-        guardarLista("r:" + f.region, items);
-        salida.push({
-          id: "fila." + f.id,
-          title: f.titulo,
-          items: items,
-          ref: "r:" + f.region,
-          genre: "entretenimiento"
+    pedidas.push((async function (f, retraso) {
+      await espera(retraso);
+      try {
+        const d = await tkLlamada("portada " + f.region, function () {
+          return tkTendencias(f.region, "0", 18, 6000);
         });
-      } else {
-        detalle.push(f.region + " vacía");
+        const items = itemsDeVideos(d);
+        if (items.length > 0) {
+          progreso.ok = progreso.ok + 1;
+          progreso.detalle.push(f.region + " " + items.length);
+        } else {
+          progreso.detalle.push(f.region + " vacía");
+        }
+        trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
+        return { f: f, items: items };
+      } catch (e) {
+        // Fila omitida: las demás siguen.
+        progreso.detalle.push(f.region + " falló: " + clip(String((e && e.message) || e), 40));
+        trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
+        return { f: f, items: [] };
       }
-    } catch (e) {
-      // Fila omitida: las demás siguen.
-      detalle.push(f.region + " falló: " + clip(String((e && e.message) || e), 40));
+    })(REGIONES_PORTADA[i], i * 350));
+  }
+  const filas = await Promise.all(pedidas);
+  const salida = [];
+  let ok = 0;
+  for (let i = 0; i < filas.length; i++) {
+    const r = filas[i];
+    const f = r.f;
+    if (r.items.length > 0) {
+      ok = ok + 1;
+      if (r.items[0].poster) posters[f.region] = r.items[0].poster;
+      guardarLista("r:" + f.region, r.items);
+      salida.push({
+        id: "fila." + f.id,
+        title: f.titulo,
+        items: r.items,
+        ref: "r:" + f.region,
+        genre: "entretenimiento"
+      });
     }
   }
-  trazaPortada = ok + "/" + REGIONES_PORTADA.length + " filas (" + detalle.join(" · ") + ")";
   kino.log("Loop portada: " + trazaPortada);
   // Las tendencias de un país, como canal continuo: una "serie" por país.
   // Solo si al menos un país respondió (si TikTok está bloqueando todo,
@@ -700,7 +723,7 @@ export async function browse(ref, cursor) {
       return r;
     } catch (e) {
       if (esVerificacion(e)) throw errorVerificacion("ver más");
-      throw traducirError(e, "TikTok no respondió ahora mismo. Inténtalo otra vez en un momento.");
+      throw traducirError(e, "TikTok no respondió ahora mismo. Inténtala otra vez en un momento.");
     }
   }
 

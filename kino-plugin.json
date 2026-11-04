@@ -2,7 +2,7 @@
   "id": "loop",
   "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "icon": "icon.png",
   "description": "TikTok en Kino: tendencias por país, búsqueda con hashtags, perfiles de creadores y enlaces pegados. Videos sin marca de agua, para verlos uno tras otro como un canal o tocándolos uno por uno.",
   "apiVersion": 11,
