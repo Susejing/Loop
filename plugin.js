@@ -1,4 +1,4 @@
-// Loop 0.1.6 — TikTok en Kino: tendencias por país, doramas y anime en
+// Loop 0.1.7 — TikTok en Kino: tendencias por país, doramas y anime en
 // español, canales por gusto, búsqueda, creadores y enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
@@ -22,6 +22,12 @@
 //   español" de la portada tampoco sale). Los canales en español y la
 //   fila de doramas muestran los videos MÁS LARGOS primero: los doramas
 //   y animes doblados se suben en partes largas, no en clips corticos.
+// — La "descripción" de un video de TikTok ES su propio texto (caption):
+//   el título llega más completo y la descripción entera, con la fecha de
+//   subida y las cifras (vistas, me gusta), va en el detalle del video.
+//   El @canal que lo subió va siempre como subtítulo; abrir un video
+//   suelto deja su canal de lista detrás, y buscar «@usuario» abre su
+//   canal directo.
 // — Los #hashtags y los @perfiles usan ese camino de tikwm que a veces
 //   pide una verificación (la página de seguridad que no deja pasar). El
 //   botón "Pasar verificación" de Ajustes la pasa UNA VEZ en una ventanita:
@@ -42,7 +48,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.6";
+const VERSION = "0.1.7";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -383,7 +389,7 @@ function itemDeVideo(v) {
   const autor = v.author && (v.author.unique_id || v.author.uniqueId)
     ? String(v.author.unique_id || v.author.uniqueId)
     : "";
-  const titulo = clip(String(v.title || "").replace(/\s+/g, " ").trim(), 90) || "Video de TikTok";
+  const titulo = clip(String(v.title || "").replace(/\s+/g, " ").trim(), 120) || "Video de TikTok";
   const item = {
     id: "tk.v." + id,
     ref: "v:" + id,
@@ -395,13 +401,28 @@ function itemDeVideo(v) {
   const nick = v.author && v.author.nickname ? String(v.author.nickname) : "";
   const firma = (autor ? "@" + autor : "") + (autor && nick ? " · " : "") + nick;
   if (firma) item.originalTitle = clip(firma, 120);
+  // La "descripción" de un video de TikTok es su propio texto (caption):
+  // la descripción entera va en el detalle, con las cifras detrás y la
+  // fecha de subida.
+  const descripcion = clip(String(v.title || "").replace(/\s+/g, " ").trim(), 220);
   const partes = [];
   if (v.play_count > 0) partes.push(miles(v.play_count) + " vistas");
   if (v.digg_count > 0) partes.push(miles(v.digg_count) + " me gusta");
   if (v.comment_count > 0) partes.push(miles(v.comment_count) + " comentarios");
-  if (partes.length > 0) item.overview = clip(partes.join(" · "), 300);
+  const detalle = [];
+  if (descripcion && descripcion !== titulo) detalle.push(descripcion);
+  if (partes.length > 0) detalle.push(partes.join(" · "));
+  if (detalle.length > 0) item.overview = clip(detalle.join(" — "), 400);
   const seg = parseInt(v.duration, 10) || 0;
   if (seg > 0) item.runtimeMinutes = Math.max(1, Math.round(seg / 60));
+  // La fecha de subida (en el detalle se ve cuántos días tiene el video).
+  const crudo = parseInt(v.create_time, 10) || 0;
+  if (crudo > 0) {
+    try {
+      const ms = crudo > 9999999999 ? crudo : crudo * 1000;
+      item.releaseDate = new Date(ms).toISOString().slice(0, 10);
+    } catch (e) { }
+  }
   recordarVideo(id, autor, titulo);
   return item;
 }
@@ -736,6 +757,10 @@ function paginaBusqueda(q, items, cursor) {
 
 async function buscarTexto(q, cursor, cantidad) {
   const c = cursor || "0";
+  // Búsqueda nueva (sin cursor): aunque sea la misma palabra de hace un
+  // momento, se empieza de cero. Solo las páginas siguientes de esa misma
+  // búsqueda deduplican para no repetir videos.
+  if (!cursor) vistosBusq = { q: q, ids: {} };
   const d = await tkLlamada("búsqueda", function () { return tkBuscar(q, c, cantidad); });
   const items = itemsDeVideos(d);
   trazaBusqueda = "tikwm '" + clip(q, 30) + "': " + items.length + " resultados (página desde " + c + ")";
@@ -836,6 +861,9 @@ function paginaBrowse(ref, items) {
 export async function browse(ref, cursor) {
   ref = String(ref || "");
   const c = typeof cursor === "string" && cursor ? cursor : "0";
+  // Abrir la misma lista otra vez (sin cursor): se empieza de cero. Solo
+  // las páginas siguientes de esa misma tanda deduplican.
+  if (typeof cursor !== "string" || !cursor) vistosBrowse = { ref: ref, ids: {} };
 
   // Las tendencias de un país (las filas de la portada y las categorías).
   if (ref.indexOf("r:") === 0) {
@@ -988,7 +1016,7 @@ export async function episodes(ref) {
   if (ref.indexOf("v:") === 0) {
     const id = ref.slice(2);
     const v = vistos[id];
-    const ep1 = { number: 1, ref: ref, title: clip(v && v.titulo ? v.titulo : "Video de TikTok", 90) };
+    const ep1 = { number: 1, ref: ref, title: clip(v && v.titulo ? v.titulo : "Video de TikTok", 120) };
 
     const lista = listaConRef(ref);
     if (lista) {
@@ -1067,7 +1095,7 @@ export async function resolve(ref) {
   const autorNuevo = d.author && (d.author.unique_id || d.author.uniqueId)
     ? String(d.author.unique_id || d.author.uniqueId)
     : "";
-  recordarVideo(s, autorNuevo || autor, clip(String(d.title || (v ? v.titulo : "")), 90));
+  recordarVideo(s, autorNuevo || autor, clip(String(d.title || (v ? v.titulo : "")), 120));
   const conMarca = String(kino.config.get("marca") || "no").trim() === "si";
   const sinMarca = String(d.play || "");
   const conMarcaUrl = String(d.wmplay || "");
