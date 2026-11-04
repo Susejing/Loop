@@ -1,4 +1,5 @@
-// Loop 0.1.1 — TikTok en Kino: tendencias, búsqueda, creadores y enlaces pegados.
+// Loop 0.1.2 — TikTok en Kino: tendencias por país, búsqueda, creadores y
+// enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
 // sesión y firma cada petición). Este plugin habla con tikwm.com, el
@@ -8,22 +9,28 @@
 // Es un servicio gratuito de un tercero, sin contrato de nivel de servicio.
 //
 // Detalles que importan:
+// — La portada son las TENDENCIAS DE VARIOS PAÍSES (Colombia, EE. UU.,
+//   México, España, Argentina, Brasil): ese camino de tikwm no pone
+//   verificación. Tocar un video lo reproduce y el resto de su fila queda
+//   de lista detrás (el canal continúa solo, desde donde se tocó). La fila
+//   "Canales que corren solos" abre las tendencias de un país como serie,
+//   episodio tras episodio.
+// — Los #hashtags y los @perfiles usan OTRO camino de tikwm que a veces
+//   pide una verificación (la página de seguridad que no deja pasar). El
+//   botón "Pasar verificación" de Ajustes la pasa UNA VEZ en una ventanita:
+//   la galleta que gana y el disfraz del navegador que la ganó viajan
+//   desde entonces con cada petición de hashtags y perfiles. Sin esa
+//   verificación, las tendencias y los enlaces pegados igual funcionan.
 // — Los enlaces de video que devuelve tikwm EXPIRAN en pocas horas: por eso
 //   se resuelven AL REPRODUCIR y nunca se guardan en caché.
 // — En el buscador se puede pegar cualquier enlace de TikTok (normal, corto
 //   vt.tiktok.com o vm.tiktok.com) y el video se abre directo.
-// — "@usuario" abre el perfil del creador como una "serie": sus videos son
-//   los episodios y el reproductor de Kino los corre uno tras otro.
-// — La portada son filas por temas (#fyp, #viral, #humor...): tocar un
-//   video lo reproduce y el resto de su fila queda de lista detrás (el
-//   canal continúa solo, desde donde se tocó). La fila "Canales que
-//   corren solos" abre los mismos temas como serie, episodio tras episodio.
 // — El plan gratuito de tikwm acepta más o menos una petición por segundo:
 //   la portada hace una pausa corta entre fila y fila, y si tikwm avisa
 //   del límite, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -32,6 +39,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 let trazaPortada = "";
 let trazaBusqueda = "";
 let trazaResolve = "";
+let trazaVentana = "";
 let ultimoResolve = null;
 
 // ---------- helpers de texto y tiempo ----------
@@ -64,6 +72,63 @@ function miles(n) {
   return String(n);
 }
 
+// ---------- almacén (la verificación pasada, para que dure) ----------
+
+function getJson(clave, porDefecto) {
+  try {
+    const v = kino.storage.get(clave);
+    return v ? JSON.parse(v) : porDefecto;
+  } catch (e) {
+    return porDefecto;
+  }
+}
+
+function setJson(clave, valor, ttlMs) {
+  try {
+    kino.storage.set(clave, JSON.stringify(valor), ttlMs || 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// La verificación cuando la persona la ha pasado: la galleta que ganó la
+// ventanita y el disfraz del navegador que la ganó viajan juntos (la
+// revisión los amarra). Sin la una no sirve el otro.
+function galletaActual() {
+  const g = getJson("verificacion", null);
+  if (!g || !g.cookies) return null;
+  const nombres = Object.keys(g.cookies);
+  if (nombres.length === 0) return null;
+  return g;
+}
+
+// Las cabeceras extra para los caminos con verificación (#hashtags y
+// @perfiles). Null cuando no hay verificación guardada.
+function cabecerasVerificadas() {
+  const g = galletaActual();
+  if (!g) return null;
+  const partes = [];
+  for (const nombre in g.cookies) partes.push(nombre + "=" + g.cookies[nombre]);
+  if (partes.length === 0) return null;
+  return { "Cookie": partes.join("; "), "User-Agent": g.ua || UA };
+}
+
+// ¿El error es la verificación de seguridad de TikTok? (la página HTML que
+// no es JSON, o un 403).
+function esVerificacion(e) {
+  if (e && e.noJson === true) return true;
+  const men = String((e && e.message) || "");
+  return /verification|just a moment|cloudflare|http 403/i.test(men);
+}
+
+// El error traducido: dónde está el botón que lo arregla.
+function errorVerificacion(que) {
+  return kino.error("unavailable", clip(que + ": verificación de TikTok pendiente", 120), {
+    userMessage: "TikTok pidió una verificación. Toca «Pasar verificación» en Ajustes ▸ Loop, espera la ventana y toca Listo; luego reintenta."
+  });
+}
+
 // ---------- red ----------
 
 // tikwm (y TikTok) devuelven los ids de video como números de 19 dígitos:
@@ -73,12 +138,15 @@ function protegerIds(texto) {
   return String(texto).replace(/("(?:id|video_id|aweme_id)"\s*:\s*)(\d{12,25})(\s*[},])/g, '$1"$2"$3');
 }
 
-async function pedirJson(url, timeoutMs) {
+async function pedirJson(url, timeoutMs, extra) {
   let ultimoError = null;
   for (let intento = 0; intento < 2; intento++) {
+    const cabeceras = { "Accept": "application/json", "User-Agent": UA };
+    if (extra && extra["User-Agent"]) cabeceras["User-Agent"] = extra["User-Agent"];
+    if (extra && extra["Cookie"]) cabeceras["Cookie"] = extra["Cookie"];
     const r = await kino.fetch(url, {
       method: "GET",
-      headers: { "Accept": "application/json", "User-Agent": UA },
+      headers: cabeceras,
       timeoutMs: timeoutMs || 15000
     }).catch(function (e) {
       ultimoError = e;
@@ -164,25 +232,40 @@ async function tkPorEnlace(enlace) {
   return tkDatos(await pedirJson(BASE + "?url=" + encodeURIComponent(enlace)), "video por enlace");
 }
 
+// Tendencias de un país: el camino SIN verificación (por eso es la portada).
+async function tkTendencias(region, cursor, cantidad) {
+  return tkDatos(
+    await pedirJson(BASE + "feed/list?count=" + cantidad +
+      "&region=" + encodeURIComponent(region) +
+      "&cursor=" + encodeURIComponent(cursor || "0")),
+    "tendencias " + region
+  );
+}
+
+// Búsqueda de #hashtags: el camino que a veces pide verificación; si la
+// persona ya la pasó, la galleta viaja aquí.
 async function tkBuscar(kw, cursor, cantidad) {
   return tkDatos(
     await pedirJson(BASE + "feed/search?keywords=" + encodeURIComponent(kw) +
-      "&count=" + cantidad + "&cursor=" + encodeURIComponent(cursor || "0")),
+      "&count=" + cantidad + "&cursor=" + encodeURIComponent(cursor || "0"),
+      15000, cabecerasVerificadas()),
     "búsqueda"
   );
 }
 
+// Los videos de un @usuario: mismo camino con verificación que los hashtags.
 async function tkUsuario(uid, cursor, cantidad) {
   return tkDatos(
     await pedirJson(BASE + "user/posts?unique_id=" + encodeURIComponent(uid) +
-      "&count=" + cantidad + "&cursor=" + encodeURIComponent(cursor || "0")),
+      "&count=" + cantidad + "&cursor=" + encodeURIComponent(cursor || "0"),
+      15000, cabecerasVerificadas()),
     "perfil"
   );
 }
 
 // La forma de la respuesta de tikwm ha cambiado con el tiempo: la lista
-// puede venir en data.videos, data.list o data.aweme_list. Se prueban las
-// tres para que el plugin sobreviva a esas mudanzas.
+// puede venir en data.videos, data.list, data.aweme_list o data pelado (las
+// tendencias). Se prueban todas para que el plugin sobreviva a mudanzas.
 function videosDe(d) {
   if (Array.isArray(d)) return d;
   if (!d || typeof d !== "object") return [];
@@ -306,15 +389,15 @@ function itemsDeVideos(d) {
   return items;
 }
 
-// Una "serie" de TikTok: un tema (#hashtag). Sus episodios son los videos
-// del momento de ese tema, uno tras otro.
-function serieDeTema(kw, titulo, poster) {
+// Una "serie" de TikTok: las tendencias de un país. Sus episodios son los
+// videos del momento de ese país, uno tras otro.
+function serieDeRegion(region, titulo, poster) {
   const item = {
-    id: "tk.h." + kw.replace(/[^A-Za-z0-9._~-]/g, ""),
-    ref: "h:" + kw,
+    id: "tk.r." + region,
+    ref: "r:" + region,
     title: clip(titulo, 90),
     kind: "series",
-    overview: "Un canal que corre solo: los videos de ahora, uno tras otro."
+    overview: "Un canal que corre solo: las tendencias de TikTok de esta región, uno tras otro."
   };
   if (poster && String(poster).indexOf("http") === 0) item.poster = String(poster);
   return item;
@@ -343,56 +426,67 @@ function serieDeUsuario(uid, d) {
 
 // ---------- portada ----------
 
-const TEMAS_PORTADA = [
-  { id: "fyp", titulo: "Tendencias de hoy", kw: "#fyp", genero: "tendencias" },
-  { id: "viral", titulo: "Viral ahora", kw: "#viral", genero: "tendencias" },
-  { id: "humor", titulo: "Humor", kw: "#humor", genero: "entretenimiento" },
-  { id: "musica", titulo: "Música", kw: "#musica", genero: "musica" },
-  { id: "baile", titulo: "Baile", kw: "#baile", genero: "entretenimiento" },
-  { id: "colombia", titulo: "Colombia", kw: "#colombia", genero: "otros" }
+const REGIONES_PORTADA = [
+  { id: "co", titulo: "Tendencias Colombia", region: "CO" },
+  { id: "us", titulo: "Tendencias EE. UU.", region: "US" },
+  { id: "mx", titulo: "Tendencias México", region: "MX" },
+  { id: "es", titulo: "Tendencias España", region: "ES" },
+  { id: "ar", titulo: "Tendencias Argentina", region: "AR" },
+  { id: "br", titulo: "Tendencias Brasil", region: "BR" }
 ];
 
-const TEMAS_CANALES = [
-  { titulo: "Canal Tendencias", kw: "#fyp" },
-  { titulo: "Canal Viral", kw: "#viral" },
-  { titulo: "Canal Humor", kw: "#humor" }
+const CANALES_PORTADA = [
+  { titulo: "Canal Colombia", region: "CO" },
+  { titulo: "Canal EE. UU.", region: "US" },
+  { titulo: "Canal México", region: "MX" }
 ];
+
+const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
+  { id: "pe", titulo: "Tendencias Perú", region: "PE" },
+  { id: "cl", titulo: "Tendencias Chile", region: "CL" }
+]);
 
 export async function home() {
   const salida = [];
   const posters = {};
+  const detalle = [];
   let ok = 0;
-  for (let i = 0; i < TEMAS_PORTADA.length; i++) {
-    const f = TEMAS_PORTADA[i];
+  for (let i = 0; i < REGIONES_PORTADA.length; i++) {
+    const f = REGIONES_PORTADA[i];
     if (i > 0) await espera(1100); // tikwm gratis: ~1 petición por segundo
     try {
-      const d = await tkLlamada("portada " + f.kw, function () { return tkBuscar(f.kw, "0", 18); });
+      const d = await tkLlamada("portada " + f.region, function () { return tkTendencias(f.region, "0", 18); });
       const items = itemsDeVideos(d);
       if (items.length > 0) {
         ok = ok + 1;
-        if (items[0].poster) posters[f.kw] = items[0].poster;
-        guardarLista("h:" + f.kw, items);
+        detalle.push(f.region + " " + items.length);
+        if (items[0].poster) posters[f.region] = items[0].poster;
+        guardarLista("r:" + f.region, items);
         salida.push({
           id: "fila." + f.id,
           title: f.titulo,
           items: items,
-          ref: "h:" + f.kw,
-          genre: f.genero
+          ref: "r:" + f.region,
+          genre: "entretenimiento"
         });
+      } else {
+        detalle.push(f.region + " vacía");
       }
     } catch (e) {
       // Fila omitida: las demás siguen.
+      detalle.push(f.region + " falló: " + clip(String((e && e.message) || e), 40));
     }
   }
-  trazaPortada = ok + "/" + TEMAS_PORTADA.length + " filas";
-  // Los mismos temas, como canal continuo: una "serie" por tema. Solo si
-  // al menos un tema respondió (si TikTok está bloqueando todo, mejor el
-  // error claro que una portada a medias).
+  trazaPortada = ok + "/" + REGIONES_PORTADA.length + " filas (" + detalle.join(" · ") + ")";
+  kino.log("Loop portada: " + trazaPortada);
+  // Las tendencias de un país, como canal continuo: una "serie" por país.
+  // Solo si al menos un país respondió (si TikTok está bloqueando todo,
+  // mejor el error claro que una portada a medias).
   if (ok > 0) {
     const canales = [];
-    for (let i = 0; i < TEMAS_CANALES.length; i++) {
-      const c = TEMAS_CANALES[i];
-      canales.push(serieDeTema(c.kw, c.titulo, posters[c.kw] || ""));
+    for (let i = 0; i < CANALES_PORTADA.length; i++) {
+      const c = CANALES_PORTADA[i];
+      canales.push(serieDeRegion(c.region, c.titulo, posters[c.region] || ""));
     }
     salida.push({
       id: "fila.canales",
@@ -411,21 +505,10 @@ export async function home() {
 
 // ---------- categorías ----------
 
-const CATEGORIAS = [
-  { id: "humor", titulo: "Humor", kw: "#humor" },
-  { id: "musica", titulo: "Música", kw: "#musica" },
-  { id: "baile", titulo: "Baile", kw: "#baile" },
-  { id: "cocina", titulo: "Cocina y comida", kw: "#cocina" },
-  { id: "animales", titulo: "Animales", kw: "#animales" },
-  { id: "deporte", titulo: "Deporte", kw: "#deporte" },
-  { id: "belleza", titulo: "Belleza y estética", kw: "#belleza" },
-  { id: "videojuegos", titulo: "Videojuegos", kw: "#videojuegos" }
-];
-
 export async function categories() {
   const fuera = [];
-  for (let i = 0; i < CATEGORIAS.length; i++) {
-    fuera.push({ id: "cat." + CATEGORIAS[i].id, title: CATEGORIAS[i].titulo, ref: "h:" + CATEGORIAS[i].kw });
+  for (let i = 0; i < REGIONES_CATEGORIAS.length; i++) {
+    fuera.push({ id: "cat." + REGIONES_CATEGORIAS[i].id, title: REGIONES_CATEGORIAS[i].titulo, ref: "r:" + REGIONES_CATEGORIAS[i].region });
   }
   return fuera;
 }
@@ -444,10 +527,8 @@ function enlaceDe(q) {
 // Un error técnico traducido a algo que la persona pueda leer.
 function traducirError(e, paraLaPersona) {
   const men = String(e && e.message ? e.message : e);
-  if ((e && e.noJson === true) || /verification|just a moment|cloudflare/i.test(men)) {
-    return kino.error("unavailable", clip(men, 120), {
-      userMessage: "TikTok pidió una verificación ahora mismo. Espera un par de minutos y vuelve a intentar."
-    });
+  if (esVerificacion(e)) {
+    return errorVerificacion("llamada");
   }
   if (/not found|no encontr|user not/i.test(men)) {
     return kino.error("not_found", clip(men, 120), {
@@ -498,6 +579,8 @@ export async function search(query) {
   const cursor = query && typeof query.cursor === "string" && query.cursor ? query.cursor : null;
 
   // Búsqueda DENTRO de una fila o categoría (capability scopedSearch).
+  // Las filas de regiones no tienen búsqueda propia en tikwm: null y Kino
+  // filtra la página él mismo.
   if (query && typeof query.within === "string" && query.within) {
     if (query.within.indexOf("h:") !== 0) return null;
     const tema = query.within.slice(2).trim();
@@ -550,6 +633,7 @@ export async function search(query) {
         for (let i = 0; i < items.length && i < 12; i++) fuera.push(items[i]);
         return fuera;
       } catch (e) {
+        if (esVerificacion(e)) throw errorVerificacion("perfil");
         throw traducirError(e, "No se pudo abrir ese perfil (o es privado).");
       }
     }
@@ -560,6 +644,7 @@ export async function search(query) {
   try {
     return await buscarTexto(q, null, 30);
   } catch (e) {
+    if (esVerificacion(e)) throw errorVerificacion("búsqueda");
     throw traducirError(e, "TikTok no respondió ahora mismo. Espera un momento y vuelve a intentar.");
   }
 }
@@ -583,6 +668,27 @@ function paginaBrowse(ref, items) {
 export async function browse(ref, cursor) {
   ref = String(ref || "");
   const c = typeof cursor === "string" && cursor ? cursor : "0";
+
+  // Las tendencias de un país (las filas de la portada y las categorías).
+  if (ref.indexOf("r:") === 0) {
+    const region = ref.slice(2).toUpperCase();
+    const cNum = parseInt(c, 10) || 0;
+    if (!/^[A-Z]{2}$/.test(region) || cNum > 150) return { items: [] };
+    try {
+      const d = await tkLlamada("ver más " + region, function () { return tkTendencias(region, c, 30); });
+      const items = paginaBrowse(ref, itemsDeVideos(d));
+      const r = { items: items };
+      // El cursor de las tendencias es un desplazamiento: la siguiente
+      // página sigue donde terminó esta. Si no hubo videos nuevos, se
+      // acabó la lista.
+      if (items.length > 0) r.next = String(cNum + 30);
+      return r;
+    } catch (e) {
+      throw traducirError(e, "TikTok no respondió ahora mismo. Inténtalo otra vez en un momento.");
+    }
+  }
+
+  // Un #hashtag (el camino con verificación).
   if (ref.indexOf("h:") === 0) {
     const kw = ref.slice(2);
     try {
@@ -593,9 +699,12 @@ export async function browse(ref, cursor) {
       if (items.length > 0 && hayMasDe(d) && cur !== null && cur !== c) r.next = cur;
       return r;
     } catch (e) {
+      if (esVerificacion(e)) throw errorVerificacion("ver más");
       throw traducirError(e, "TikTok no respondió ahora mismo. Inténtalo otra vez en un momento.");
     }
   }
+
+  // Un creador (@usuario).
   if (ref.indexOf("u:") === 0) {
     const uid = ref.slice(2);
     try {
@@ -606,6 +715,7 @@ export async function browse(ref, cursor) {
       if (items.length > 0 && hayMasDe(d) && cur !== null && cur !== c) r.next = cur;
       return r;
     } catch (e) {
+      if (esVerificacion(e)) throw errorVerificacion("perfil");
       throw traducirError(e, "No se pudo abrir este perfil ahora mismo.");
     }
   }
@@ -630,6 +740,27 @@ function episodiosDe(items) {
 export async function episodes(ref) {
   ref = String(ref || "");
 
+  // Las tendencias de un país como serie: los videos del momento son los
+  // episodios, uno tras otro.
+  if (ref.indexOf("r:") === 0) {
+    const region = ref.slice(2).toUpperCase();
+    if (!/^[A-Z]{2}$/.test(region)) throw kino.error("not_found", "región extraña " + clip(region, 60));
+    try {
+      const d = await tkLlamada("canal " + region, function () { return tkTendencias(region, "0", 30); });
+      const items = itemsDeVideos(d);
+      if (items.length === 0) {
+        throw kino.error("not_found", "tendencias sin videos", {
+          userMessage: "Esta región no trajo videos ahora mismo. Prueba con otra."
+        });
+      }
+      guardarLista(ref, items);
+      return { episodes: episodiosDe(items) };
+    } catch (e) {
+      if (e && e.code) throw e;
+      throw traducirError(e, "El canal no respondió ahora mismo. Inténtalo otra vez.");
+    }
+  }
+
   // Un tema (#hashtag) como serie: los videos del momento son los episodios.
   if (ref.indexOf("h:") === 0) {
     const kw = ref.slice(2);
@@ -645,6 +776,7 @@ export async function episodes(ref) {
       return { episodes: episodiosDe(items) };
     } catch (e) {
       if (e && e.code) throw e;
+      if (esVerificacion(e)) throw errorVerificacion("canal");
       throw traducirError(e, "El canal no respondió ahora mismo. Inténtalo otra vez.");
     }
   }
@@ -663,6 +795,7 @@ export async function episodes(ref) {
       return { episodes: episodiosDe(items) };
     } catch (e) {
       if (e && e.code) throw e;
+      if (esVerificacion(e)) throw errorVerificacion("canal");
       throw traducirError(e, "El perfil no respondió ahora mismo. Inténtalo otra vez.");
     }
   }
@@ -778,17 +911,93 @@ export async function resolve(ref) {
 export async function settingsStatus() {
   const conMarca = String(kino.config.get("marca") || "no").trim() === "si";
   let texto = "Loop " + VERSION + ". Videos " + (conMarca ? "con marca de agua." : "sin marca de agua.") + ".";
+  const g = galletaActual();
+  if (g) {
+    const hace = g.t ? Math.max(0, Math.round((Date.now() - g.t) / 60000)) : 0;
+    texto = texto + " Verificación: pasada hace " + (hace >= 90 ? Math.round(hace / 60) + " h" : hace + " min") + ".";
+  } else {
+    texto = texto + " Verificación: sin pasar (los #hashtags y los perfiles la pueden pedir).";
+  }
   if (ultimoResolve) texto = texto + " Último: " + clip(ultimoResolve.titulo || ultimoResolve.label, 40) + ".";
   return { estado: clip(texto + " Detalle: busca 'debug'.", 200) };
+}
+
+// La ventanita de verificación (Ajustes ▸ Loop ▸ Pasar verificación).
+// TikTok a veces pide su revisión en el camino de los #hashtags: la ventana
+// abre ESE camino, la persona espera a que cargue (la revisión se pasa sola
+// o con un toque) y al tocar Listo la galleta y el disfraz del navegador
+// llegan aquí y viajan desde entonces con cada petición. Una ventana por
+// toque, solo tras un toque de la persona (requisito de la app) y solo si
+// esta versión de la app tiene la ventanita disponible.
+export async function action(key) {
+  if (key !== "verificacion") return null;
+  if (!kino.visualBrowser || !kino.visualBrowser.available) {
+    throw kino.error("unavailable", "sin ventana del navegador", {
+      userMessage: "Esta versión de la app no trae la ventana del navegador. Actualiza la app e inténtalo otra vez."
+    });
+  }
+  let r = null;
+  try {
+    r = await kino.visualBrowser.open({
+      url: BASE + "feed/search?keywords=" + encodeURIComponent("#fyp") + "&count=1&cursor=0",
+      title: "Verificación de TikTok",
+      collect: { cookies: ["cf_clearance", "__cf_bm"] },
+      userAgent: "browser",
+      timeoutMs: 120000
+    });
+  } catch (e) {
+    trazaVentana = "ventana falló: " + clip(String((e && e.message) || e), 80);
+    kino.log("Loop " + trazaVentana);
+    throw kino.error("unavailable", clip(trazaVentana, 120), {
+      userMessage: "La ventana no se pudo abrir ahora mismo. Inténtalo otra vez en un momento."
+    });
+  }
+  const st = (r && r.status) || "sin-respuesta";
+  // Las galletas pueden llegar de varias formas: se normalizan todas a un
+  // objeto {nombre: valor}.
+  const g = {};
+  const crudas = r && r.cookies;
+  if (typeof crudas === "string" && crudas) {
+    crudas.split(";").forEach(function (p) {
+      const i = p.indexOf("=");
+      if (i > 0) g[p.slice(0, i).trim()] = p.slice(i + 1).trim();
+    });
+  } else if (Array.isArray(crudas)) {
+    crudas.forEach(function (c) {
+      if (c && c.name && c.value !== undefined) g[String(c.name)] = String(c.value);
+    });
+  } else if (crudas && typeof crudas === "object") {
+    for (const k in crudas) g[k] = String(crudas[k]);
+  }
+  const nombres = Object.keys(g);
+  trazaVentana = "ventana: " + st + ", galletas " + (nombres.length ? nombres.join(",") : "ninguna");
+  kino.log("Loop " + trazaVentana);
+  if (st !== "done" || nombres.length === 0) {
+    throw kino.error("unavailable", clip(trazaVentana, 120), {
+      userMessage: "La verificación no se completó. Ábrela otra vez y espera a que la página cargue antes de tocar Listo."
+    });
+  }
+  const guardado = setJson("verificacion", { cookies: g, ua: String(r.userAgent || ""), t: Date.now() }, 21600000);
+  if (!guardado) {
+    throw kino.error("unavailable", "no se pudo guardar la verificación", {
+      userMessage: "La verificación pasó pero no se pudo guardar. Vuelve a tocar el botón."
+    });
+  }
+  return null;
 }
 
 // El informe técnico como resultados de búsqueda: cada línea es un
 // resultado, así nada se corta (el Estado de Ajustes se corta en 200).
 function informeDebug() {
   const lineas = [];
+  const g = galletaActual();
   lineas.push("Loop " + VERSION + " — informe técnico. (Estas líneas no se pueden reproducir.)");
   lineas.push("Marca de agua: " + String(kino.config.get("marca") || "no"));
   lineas.push("Portada: " + (trazaPortada || "(la portada aún no se ha abierto)"));
+  lineas.push("Galleta: " + (g
+    ? "presente (gana el camino de #hashtags y @perfiles)"
+    : "ninguna (los #hashtags y los @perfiles pueden pedir verificación)"));
+  lineas.push("Ventana: " + (trazaVentana || "(la ventanita no se ha abierto)"));
   lineas.push("Búsqueda: " + (trazaBusqueda || "(aún no se ha buscado)"));
   lineas.push("Reproducción: " + (trazaResolve || "(nada reproducido desde la actualización)"));
   lineas.push("Videos recordados: " + Object.keys(vistos).length + " (para enlaces y canales)");

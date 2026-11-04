@@ -2,9 +2,9 @@
   "id": "loop",
   "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "icon": "icon.png",
-  "description": "TikTok en Kino: tendencias por temas, búsqueda con hashtags, perfiles de creadores y enlaces pegados. Videos sin marca de agua, para verlos uno tras otro como un canal o tocándolos uno por uno.",
+  "description": "TikTok en Kino: tendencias por país, búsqueda con hashtags, perfiles de creadores y enlaces pegados. Videos sin marca de agua, para verlos uno tras otro como un canal o tocándolos uno por uno.",
   "apiVersion": 11,
   "entry": "plugin.js",
   "hosts": [
@@ -16,6 +16,11 @@
     "*.tiktokv.com"
   ],
   "capabilities": ["search", "home", "browse", "episodes", "resolve", "scopedSearch"],
+  "enhancements": {
+    "20": {
+      "visualBrowser": true
+    }
+  },
   "settings": [
     { "key": "reproduccion", "label": "Reproducción", "type": "section", "hint": "Cómo quieres ver los videos de TikTok." },
     {
@@ -29,7 +34,20 @@
       ],
       "hint": "Sin marca se ve limpio; con marca queda como en la app de TikTok."
     },
-    { "key": "estado", "label": "Estado", "type": "status" }
+    { "key": "estado", "label": "Estado", "type": "status" },
+    {
+      "key": "verif",
+      "label": "Búsqueda y perfiles",
+      "type": "section",
+      "hint": "Los #hashtags y los @perfiles de TikTok a veces piden una verificación de seguridad. Pásala una vez con el botón de abajo; queda guardada unas horas y la búsqueda y los perfiles vuelven a funcionar."
+    },
+    {
+      "key": "verificacion",
+      "label": "Pasar verificación",
+      "type": "action",
+      "hint": "Abre una ventanita de TikTok; espera a que cargue y toca Listo.",
+      "confirm": "Se abrirá una ventana de tikwm.com. Espera a que la página cargue y toca Listo."
+    }
   ],
   "color": "#FE2C55",
   "debug": true
