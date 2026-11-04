@@ -1,5 +1,5 @@
-// Loop 0.1.5 — TikTok en Kino: tendencias por país, canales por gusto,
-// búsqueda, creadores y enlaces pegados.
+// Loop 0.1.6 — TikTok en Kino: tendencias por país, doramas y anime en
+// español, canales por gusto, búsqueda, creadores y enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
 // sesión y firma cada petición). Este plugin habla con tikwm.com, el
@@ -15,11 +15,13 @@
 //   de lista detrás (el canal continúa solo, desde donde se tocó). La fila
 //   "Canales que corren solos" abre las tendencias de un país como serie,
 //   episodio tras episodio.
-// — «Canales por gusto»: doramas, anime, AMV, k-pop y más. Cada uno abre
-//   un canal con los videos de ese #tema — el mismo camino de los
-//   hashtags, que usa la verificación pasada en Ajustes (sin ella, al
-//   abrir uno la app pedirá pasarla; la fila "Doramas de hoy" de la
-//   portada tampoco sale).
+// — «Canales por gusto»: doramas y anime EN ESPAÑOL, AMV, k-pop y más.
+//   Cada uno abre un canal con los videos de ese tema — el mismo camino
+//   de los hashtags, que usa la verificación pasada en Ajustes (sin
+//   ella, al abrir uno la app pedirá pasarla; la fila "Doramas en
+//   español" de la portada tampoco sale). Los canales en español y la
+//   fila de doramas muestran los videos MÁS LARGOS primero: los doramas
+//   y animes doblados se suben en partes largas, no en clips corticos.
 // — Los #hashtags y los @perfiles usan ese camino de tikwm que a veces
 //   pide una verificación (la página de seguridad que no deja pasar). El
 //   botón "Pasar verificación" de Ajustes la pasa UNA VEZ en una ventanita:
@@ -30,6 +32,8 @@
 //   se resuelven AL REPRODUCIR y nunca se guardan en caché.
 // — En el buscador se puede pegar cualquier enlace de TikTok (normal, corto
 //   vt.tiktok.com o vm.tiktok.com) y el video se abre directo.
+// — El buscador ya no se queda en la primera página: al llegar al final de
+//   los resultados, la siguiente se carga sola (hasta unos 200 videos).
 // — La portada pide sus filas A LA VEZ, con un escalonado de un segundo
 //   entre una y otra (el plan gratuito de tikwm acepta más o menos una
 //   petición por segundo: pedirlas casi juntas las negaba TODAS con
@@ -38,7 +42,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.5";
+const VERSION = "0.1.6";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -298,6 +302,23 @@ function hayMasDe(d) {
   return false;
 }
 
+// El cursor de la página siguiente. tikwm a veces lo dice (cursor/has_more);
+// cuando no lo dice, el cursor de la búsqueda funciona como desplazamiento
+// (0, 25, 50...): se calcula aquí mismo y se sigue bajando hasta ~200
+// resultados o hasta que la página no traiga videos nuevos.
+function cursorSiguiente(d, c) {
+  const cur = cursorDe(d);
+  if (cur !== null && cur !== c && hayMasDe(d)) return cur;
+  if (cur === null) {
+    const crudos = videosDe(d).length;
+    if (crudos >= 10) {
+      const off = (parseInt(c, 10) || 0) + crudos;
+      if (off < 200) return String(off);
+    }
+  }
+  return null;
+}
+
 // ---------- memoria del plugin ----------
 
 // Lo que se sabe de cada video (quién lo subió, su título): al reproducir
@@ -398,6 +419,39 @@ function itemsDeVideos(d) {
   return items;
 }
 
+// Une dos páginas de resultados sin repetir videos.
+function fusionarItems(una, otra) {
+  const fuera = una.slice();
+  const ya = {};
+  for (let i = 0; i < una.length; i++) ya[una[i].id] = 1;
+  for (let i = 0; i < otra.length; i++) {
+    const it = otra[i];
+    if (it && it.id && !ya[it.id]) {
+      ya[it.id] = 1;
+      fuera.push(it);
+    }
+  }
+  return fuera;
+}
+
+// Los temas en español y los doblados piden videos LARGOS primero: los
+// doramas y animes doblados se suben en partes largas, no en clips corticos.
+function temaLargo(tag) {
+  return /español|doblado/i.test(String(tag || ""));
+}
+
+// Los más largos primero; el resto mantiene su orden (los cortos quedan
+// al final, no se botan). Si algo raro pasa, se devuelve tal cual.
+function ordenarLargos(items) {
+  try {
+    return items.slice().sort(function (a, b) {
+      return (parseInt(b.runtimeMinutes, 10) || 0) - (parseInt(a.runtimeMinutes, 10) || 0);
+    });
+  } catch (e) {
+    return items;
+  }
+}
+
 // Una "serie" de TikTok: las tendencias de un país. Sus episodios son los
 // videos del momento de ese país, uno tras otro.
 function serieDeRegion(region, titulo, poster) {
@@ -433,7 +487,7 @@ function serieDeUsuario(uid, d) {
   return item;
 }
 
-// Una "serie" de TikTok: un #tema (anime, doramas, AMV…). Sus episodios son
+// Una "serie" de TikTok: un tema (anime, doramas, AMV…). Sus episodios son
 // los videos del momento de ese tema, uno tras otro.
 function serieDeTema(titulo, tag) {
   return {
@@ -441,7 +495,7 @@ function serieDeTema(titulo, tag) {
     ref: "h:" + tag,
     title: clip(titulo, 90),
     kind: "series",
-    overview: "Un canal que corre solo: los videos de " + tag + " del momento, uno tras otro."
+    overview: "Un canal que corre solo: los videos del momento de este tema, uno tras otro" + (temaLargo(tag) ? "; los más largos salen primero." : ".")
   };
 }
 
@@ -462,17 +516,23 @@ const CANALES_PORTADA = [
   { titulo: "Canal México", region: "MX" }
 ];
 
-// La fila de doramas de la portada: va por el camino de los #hashtags
-// (usa la verificación pasada, si la hay). Sin verificación no sale y las
-// tendencias siguen igual.
-const DORAMAS_FILA = { id: "doramas", titulo: "Doramas de hoy", tag: "#doramas", ref: "h:#doramas" };
+// La fila de doramas de la portada: EN ESPAÑOL (petición del usuario — el
+// #doramas mundial trae videos en otros idiomas). Si el buscador en español
+// no trae nada, se cae al #doramas mundial antes de omitir la fila. Va por
+// el camino de los #hashtags (usa la verificación pasada, si la hay). Sin
+// verificación no sale y las tendencias siguen igual. Los videos más
+// largos salen primero: los doramas doblados se suben en partes largas.
+const DORAMAS_FILA = { id: "doramas", titulo: "Doramas en español", tag: "doramas en español", respaldo: "#doramas", ref: "h:doramas en español" };
 
-// Los canales por gusto: cada uno abre el #tema como serie continua. Sin
-// galleta, tocarlos enseña el camino del botón de verificación.
+// Los canales por gusto: los de español primero (sus videos más largos
+// salen primero). Sin galleta, tocarlos enseña el camino del botón de
+// verificación.
 const TEMAS = [
+  { titulo: "Doramas en español", tag: "doramas en español" },
+  { titulo: "Doramas doblados", tag: "doramas doblados" },
+  { titulo: "Anime en español", tag: "anime en español" },
   { titulo: "Anime", tag: "#anime" },
   { titulo: "AMV", tag: "#amv" },
-  { titulo: "Doramas", tag: "#kdrama" },
   { titulo: "K-pop", tag: "#kpop" },
   { titulo: "Baile", tag: "#dance" },
   { titulo: "Memes", tag: "#memes" },
@@ -521,17 +581,34 @@ export async function home() {
       }
     })(REGIONES_PORTADA[i], i * 1100));
   }
-  // La fila de doramas va última en el escalonado (sigue en paralelo con
-  // las demás; solo empieza un segundo después de la última).
+  // La fila de doramas en español va última en el escalonado (sigue en
+  // paralelo con las demás; solo empieza un segundo después de la última).
   pedidas.push((async function (f, retraso) {
     await espera(retraso);
     try {
-      const d = await tkLlamada("fila doramas", function () {
+      let d = await tkLlamada("fila doramas", function () {
         return tkBuscar(f.tag, "0", 18, 6000);
       });
-      const items = itemsDeVideos(d);
-      if (items.length > 0) progreso.detalle.push("doramas " + items.length);
-      else progreso.detalle.push("doramas vacía");
+      let items = itemsDeVideos(d);
+      if (items.length === 0 && f.respaldo) {
+        // El buscador en español no trajo nada: el #doramas mundial.
+        await espera(1100);
+        try {
+          d = await tkLlamada("fila doramas (respaldo)", function () {
+            return tkBuscar(f.respaldo, "0", 18, 6000);
+          });
+          items = itemsDeVideos(d);
+        } catch (e2) {
+          items = [];
+        }
+      }
+      if (items.length > 0) {
+        // Los doramas doblados se suben en partes largas: los largos primero.
+        items = ordenarLargos(items);
+        progreso.detalle.push("doramas " + items.length);
+      } else {
+        progreso.detalle.push("doramas vacía");
+      }
       trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
       return { f: f, items: items };
     } catch (e) {
@@ -661,10 +738,8 @@ async function buscarTexto(q, cursor, cantidad) {
   const c = cursor || "0";
   const d = await tkLlamada("búsqueda", function () { return tkBuscar(q, c, cantidad); });
   const items = itemsDeVideos(d);
-  trazaBusqueda = "tikwm '" + clip(q, 30) + "': " + items.length + " resultados";
-  const cur = cursorDe(d);
-  const mas = hayMasDe(d) && cur !== null && cur !== c;
-  return paginaBusqueda(q, items, mas ? cur : null);
+  trazaBusqueda = "tikwm '" + clip(q, 30) + "': " + items.length + " resultados (página desde " + c + ")";
+  return paginaBusqueda(q, items, cursorSiguiente(d, c));
 }
 
 export async function search(query) {
@@ -781,15 +856,15 @@ export async function browse(ref, cursor) {
     }
   }
 
-  // Un #hashtag (el camino con verificación).
+  // Un tema (#hashtag o palabras en español): el camino con verificación.
   if (ref.indexOf("h:") === 0) {
     const kw = ref.slice(2);
     try {
       const d = await tkLlamada("ver más", function () { return tkBuscar(kw, c, 30); });
       const items = paginaBrowse(ref, itemsDeVideos(d));
       const r = { items: items };
-      const cur = cursorDe(d);
-      if (items.length > 0 && hayMasDe(d) && cur !== null && cur !== c) r.next = cur;
+      const cur = cursorSiguiente(d, c);
+      if (items.length > 0 && cur !== null) r.next = cur;
       return r;
     } catch (e) {
       if (esVerificacion(e)) throw errorVerificacion("ver más");
@@ -854,12 +929,25 @@ export async function episodes(ref) {
     }
   }
 
-  // Un tema (#hashtag) como serie: los videos del momento son los episodios.
+  // Un tema (#hashtag o palabras en español) como serie: se buscan DOS
+  // páginas de videos (más material para el canal) y en los temas en
+  // español los MÁS LARGOS salen primero.
   if (ref.indexOf("h:") === 0) {
     const kw = ref.slice(2);
     try {
       const d = await tkLlamada("canal " + kw, function () { return tkBuscar(kw, "0", 30); });
-      const items = itemsDeVideos(d);
+      let items = itemsDeVideos(d);
+      const cur2 = cursorSiguiente(d, "0");
+      if (items.length > 0 && cur2 !== null && items.length < 60) {
+        await espera(1100);
+        try {
+          const d2 = await tkLlamada("canal " + kw + " (pág 2)", function () { return tkBuscar(kw, cur2, 30); });
+          items = fusionarItems(items, itemsDeVideos(d2));
+        } catch (e2) {
+          // La primera página alcanza.
+        }
+      }
+      if (temaLargo(kw)) items = ordenarLargos(items);
       if (items.length === 0) {
         throw kino.error("not_found", "tema sin videos", {
           userMessage: "Este tema no trajo videos ahora mismo. Prueba con otro."
