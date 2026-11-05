@@ -14,15 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Loop 0.3.0 — TikTok en Kino: sección propia «Loop» en la app — un video
-// destacado arriba y pestañas por gusto (Doramas, Anime, Música, Humor y
-// más, Países) — y colores propios de TikTok: el acento cian pinta la
-// barra y los controles del reproductor mientras suena un video de Loop.
-// Viene de la 0.2.0: portada con criterio (doramas en español arriba del
-// todo, Colombia detrás), insignias en las tarjetas (Nuevo, Largo,
-// Español), géneros por tema, categorías de países Y temas, y el arte de
-// fondo del video en su ficha. Además: tendencias por país, canales por
-// gusto, búsqueda, creadores y enlaces pegados.
+// Loop 0.4.0 — TikTok en Kino: la sección propia «Loop» con las pestañas
+// LLENAS: más filas por gusto (la segunda página del tema principal —«Más
+// doramas en español»—, K-dramas y música del momento), una fila «Continuar
+// viendo» con lo último que se miró y los canales del gusto siempre al
+// final de cada pestaña; «Países» sube a OCHO regiones ( Perú y Chile).
+// Viene de la 0.3.0: sección con destacado y pestañas, colores TikTok (el
+// acento cian pinta la barra del reproductor mientras suena un video de
+// Loop); y de la 0.2.0: portada con criterio (doramas en español arriba,
+// Colombia detrás), insignias en las tarjetas (Nuevo, Largo, Español),
+// géneros por tema, categorías de países y temas, y el arte de fondo del
+// video en su ficha. Además: tendencias por país, canales por gusto,
+// búsqueda, creadores y enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
 // sesión y firma cada petición). Este plugin habla con tikwm.com, el
@@ -47,9 +50,12 @@
 //   y animes doblados se suben en partes largas, no en clips corticos.
 // — La sección propia «Loop» (chip arriba del Inicio en el teléfono,
 //   barra lateral en la TV) abre con un video destacado arriba y sus
-//   pestañas por gusto. Sin verificación llega a «Países» (las tendencias
-//   no necesitan galleta); con ella, a «Doramas». Una pestaña de temas
-//   sin verificación muestra sus canales, como hace la portada.
+//   pestañas por gusto, cada una con VARIAS filas: lo mejor del tema, la
+//   segunda página del tema principal («Más doramas en español»…), lo
+//   último que se miró («Continuar viendo») y los canales del gusto al
+//   final. «Países» trae las tendencias de OCHO regiones. Sin verificación
+//   llega a «Países» (las tendencias no necesitan galleta); una pestaña
+//   de temas sin verificación muestra «Continuar viendo» y sus canales.
 // — La "descripción" de un video de TikTok ES su propio texto (caption):
 //   el título llega más completo y la descripción entera, con la fecha de
 //   subida y las cifras (vistas, me gusta), va en el detalle del video.
@@ -76,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -359,9 +365,14 @@ function cursorSiguiente(d, c) {
 // Lo que se sabe de cada video (quién lo subió, su título): al reproducir
 // hay que armar el enlace canónico de TikTok, que lleva el @usuario.
 var vistos = {};
-function recordarVideo(id, autor, titulo) {
+function recordarVideo(id, autor, titulo, cover) {
   if (!id) return;
-  vistos[id] = { autor: autor || "", titulo: titulo || "", t: Date.now() };
+  vistos[id] = {
+    autor: autor || "",
+    titulo: titulo || "",
+    cover: cover && String(cover).indexOf("http") === 0 ? String(cover) : "",
+    t: Date.now()
+  };
   const claves = Object.keys(vistos);
   if (claves.length > 400) {
     claves.sort(function (a, b) { return vistos[a].t - vistos[b].t; });
@@ -478,7 +489,7 @@ function itemDeVideo(v, ctx) {
     if (item.genres.length === 0) delete item.genres;
   }
   if (ctx && ctx.espanol) item.lang = "es";
-  recordarVideo(id, autor, titulo);
+  recordarVideo(id, autor, titulo, cover);
   return item;
 }
 
@@ -618,11 +629,13 @@ const DORAMAS_FILA = { id: "doramas", titulo: "Doramas en español", tag: "doram
 const TEMAS = [
   { titulo: "Doramas en español", tag: "doramas en español", genero: ["Doramas"], espanol: true },
   { titulo: "Doramas doblados", tag: "doramas doblados", genero: ["Doramas"], espanol: true },
+  { titulo: "K-dramas", tag: "#kdrama", genero: ["Doramas"] },
   { titulo: "Anime en español", tag: "anime en español", genero: ["Anime"], espanol: true },
   { titulo: "Anime", tag: "#anime", genero: ["Anime"] },
   { titulo: "AMV", tag: "#amv", genero: ["Anime", "Música"] },
   { titulo: "K-pop", tag: "#kpop", genero: ["K-pop", "Música"] },
   { titulo: "Baile", tag: "#dance", genero: ["Baile"] },
+  { titulo: "Música del momento", tag: "música", genero: ["Música"] },
   { titulo: "Memes", tag: "#memes", genero: ["Humor"] },
   { titulo: "Fútbol", tag: "#futbol", genero: ["Deportes", "Fútbol"] },
   { titulo: "Videojuegos", tag: "#gaming", genero: ["Videojuegos"] },
@@ -784,10 +797,32 @@ export async function home() {
 // los #hashtags, que usa la verificación pasada en Ajustes). Las
 // etiquetas son cortas a propósito: es lo que se lee en el chip.
 const SECCION_TABS = [
-  { id: "doramas", label: "Doramas", tags: ["doramas en español", "doramas doblados"] },
-  { id: "anime", label: "Anime", tags: ["anime en español", "#anime", "#amv"] },
-  { id: "musica", label: "Música", tags: ["#kpop", "#dance"] },
-  { id: "varios", label: "Humor y más", tags: ["#memes", "#humor", "#futbol", "#gaming", "#recetas"] },
+  { id: "doramas", label: "Doramas", filas: [
+    { tag: "doramas en español" },
+    { tag: "doramas doblados" },
+    { tag: "#kdrama" },
+    { tag: "doramas en español", cursor: "18", titulo: "Más doramas en español" }
+  ] },
+  { id: "anime", label: "Anime", filas: [
+    { tag: "anime en español" },
+    { tag: "#anime" },
+    { tag: "#amv" },
+    { tag: "anime en español", cursor: "18", titulo: "Más anime en español" }
+  ] },
+  { id: "musica", label: "Música", filas: [
+    { tag: "#kpop" },
+    { tag: "#dance" },
+    { tag: "música" },
+    { tag: "#kpop", cursor: "18", titulo: "Más K-pop" }
+  ] },
+  { id: "varios", label: "Humor y más", filas: [
+    { tag: "#memes" },
+    { tag: "#humor" },
+    { tag: "#futbol" },
+    { tag: "#gaming" },
+    { tag: "#recetas" },
+    { tag: "#humor", cursor: "18", titulo: "Más humor" }
+  ] },
   { id: "paises", label: "Países", regiones: true }
 ];
 
@@ -817,25 +852,46 @@ function heroDe(item) {
 // Las filas de videos de una pestaña de temas: se piden a la vez con el
 // mismo escalonado de la portada (el plan gratuito de tikwm acepta más o
 // menos una petición por segundo). La que falla se omite y las demás
-// siguen.
-async function filasDeSeccionTemas(tab, tags) {
+// siguen. Una fila puede pedir la SEGUNDA página de su tema (cursor 18):
+// «Más doramas en español» y compañía.
+async function filasDeSeccionTemas(tab, filas) {
   const pedidas = [];
-  for (let i = 0; i < tags.length; i++) {
-    pedidas.push((async function (tag, retraso) {
+  for (let i = 0; i < filas.length; i++) {
+    pedidas.push((async function (fila, retraso) {
       await espera(retraso);
-      const tema = temaDeTag(tag);
-      if (!tema) return { tag: tag, items: [] };
+      const tema = temaDeTag(fila.tag);
+      if (!tema) return { fila: fila, items: [] };
       try {
-        const d = await tkLlamada("sección " + tema.tag, function () { return tkBuscar(tema.tag, "0", 18, 6000); });
+        const d = await tkLlamada("sección " + tema.tag, function () { return tkBuscar(tema.tag, fila.cursor || "0", 18, 6000); });
         let items = itemsDeVideos(d, { genero: tema.genero, espanol: !!tema.espanol });
         if (temaLargo(tema.tag)) items = ordenarLargos(items);
-        return { tag: tag, items: items };
+        return { fila: fila, items: items };
       } catch (e) {
-        return { tag: tag, items: [] };
+        return { fila: fila, items: [] };
       }
-    })(tags[i], i * 1100));
+    })(filas[i], i * 1100));
   }
   return await Promise.all(pedidas);
+}
+
+// «Continuar viendo»: lo último que se miró, lo más reciente primero —
+// cada video recordado ya sabe su título y su portada (desde la 0.4.0 el
+// registro las guarda). Tocar uno lo reproduce donde estaba. Solo sale la
+// fila si hay al menos tres.
+function filaContinuar() {
+  const claves = [];
+  for (const id in vistos) claves.push(id);
+  claves.sort(function (a, b) { return (vistos[b].t || 0) - (vistos[a].t || 0); });
+  const items = [];
+  for (let i = 0; i < claves.length && items.length < 12; i++) {
+    const id = claves[i];
+    const v = vistos[id];
+    const it = { id: "tk.v." + id, ref: "v:" + id, title: clip(v.titulo || "Video de TikTok", 120), kind: "movie" };
+    if (v.cover) it.poster = v.cover;
+    if (v.autor) it.originalTitle = clip("@" + v.autor, 120);
+    items.push(it);
+  }
+  return items;
 }
 
 // La sección propia: la entrada «Loop» de la app (chip arriba del Inicio
@@ -857,10 +913,16 @@ export async function section(arg) {
   }
   const rows = [];
   let hero = null;
+  // «Continuar viendo»: lo último que se miró, en todas las pestañas.
+  const cont = filaContinuar();
+  if (cont.length >= 3) {
+    rows.push({ id: "sec.continuar", title: "Continuar viendo", items: cont, genre: "otros" });
+  }
   if (tab.regiones) {
-    // «Países»: las tendencias de cada región, el camino sin verificación.
+    // «Países»: las tendencias de las OCHO regiones, el camino sin
+    // verificación.
     const pedidas = [];
-    for (let i = 0; i < REGIONES_PORTADA.length; i++) {
+    for (let i = 0; i < REGIONES_CATEGORIAS.length; i++) {
       pedidas.push((async function (f, retraso) {
         await espera(retraso);
         try {
@@ -869,7 +931,7 @@ export async function section(arg) {
         } catch (e) {
           return { f: f, items: [] };
         }
-      })(REGIONES_PORTADA[i], i * 1100));
+      })(REGIONES_CATEGORIAS[i], i * 1100));
     }
     const filas = await Promise.all(pedidas);
     for (let i = 0; i < filas.length; i++) {
@@ -886,9 +948,9 @@ export async function section(arg) {
         if (!hero) hero = heroDe(r.items[0]);
       }
     }
-    if (rows.length === 0) {
+    if (rows.length === 1) {
       // Todo falló (¿límite del plan?): los canales de país, que no
-      // necesitan red.
+      // necesitan red. («Continuar viendo» ya está arriba, si la había.)
       rows.push({
         id: "sec.paises.canales",
         title: "Canales que corren solos",
@@ -900,34 +962,49 @@ export async function section(arg) {
         genre: "otros"
       });
     }
-    trazaSeccion = tab.label + ": " + rows.length + " filas de tendencias";
+    trazaSeccion = tab.label + ": " + rows.length + " filas (tendencias)";
   } else {
-    const filas = await filasDeSeccionTemas(tab, tab.tags);
+    // Las filas del gusto, sin repetir videos entre ellas; las «Más X»
+    // (segunda página del mismo tema) solo salen si traen al menos tres
+    // videos NUEVOS — si tikwm no paginó, la fila se omite sin ruido.
+    const filas = await filasDeSeccionTemas(tab, tab.filas);
+    const ids = {};
     for (let i = 0; i < filas.length; i++) {
-      const tema = temaDeTag(filas[i].tag);
-      if (!tema || filas[i].items.length === 0) continue;
-      guardarLista("h:" + tema.tag, filas[i].items);
+      const fila = filas[i].fila;
+      const tema = temaDeTag(fila.tag);
+      if (!tema) continue;
+      const items = [];
+      for (let j = 0; j < filas[i].items.length; j++) {
+        const it = filas[i].items[j];
+        if (!ids[it.id]) { ids[it.id] = 1; items.push(it); }
+      }
+      const esSegunda = fila.cursor && fila.cursor !== "0";
+      if (items.length === 0 || (esSegunda && items.length < 3)) continue;
+      guardarLista("h:" + tema.tag, items);
       rows.push({
-        id: "sec." + tab.id + "." + String(tema.tag).replace(/[^a-z0-9]/gi, "").toLowerCase(),
-        title: tema.titulo,
-        items: filas[i].items,
+        id: "sec." + tab.id + "." + String(tema.tag).replace(/[^a-z0-9]/gi, "").toLowerCase() + (esSegunda ? ".mas" : ""),
+        title: fila.titulo || tema.titulo,
+        items: items,
         ref: "h:" + tema.tag,
         genre: "otros"
       });
-      if (!hero) hero = heroDe(filas[i].items[0]);
+      if (!hero) hero = heroDe(items[0]);
     }
-    if (rows.length === 0) {
-      // Sin verificación (o sin respuesta): los canales del gusto, que no
-      // piden red; al tocarlos, la app enseña el camino del botón de
-      // verificación, como con la portada.
-      const canales = [];
-      for (let i = 0; i < tab.tags.length; i++) {
-        const tema = temaDeTag(tab.tags[i]);
-        if (tema) canales.push(serieDeTema(tema.titulo, tema.tag, tema.genero));
-      }
+    // Los canales del gusto, SIEMPRE al final de la pestaña: otra manera
+    // de entrar (el canal corre solo, episodio tras episodio) y el camino
+    // del botón de verificación cuando faltó la galleta.
+    const canales = [];
+    const yaTag = {};
+    for (let i = 0; i < tab.filas.length; i++) {
+      const tema = temaDeTag(tab.filas[i].tag);
+      if (!tema || yaTag[tema.tag]) continue;
+      yaTag[tema.tag] = 1;
+      canales.push(serieDeTema(tema.titulo, tema.tag, tema.genero));
+    }
+    if (canales.length > 0) {
       rows.push({ id: "sec." + tab.id + ".canales", title: "Canales de este gusto", items: canales, genre: "otros" });
     }
-    trazaSeccion = tab.label + ": " + rows.length + " filas de temas";
+    trazaSeccion = tab.label + ": " + rows.length + " filas (temas y canales)";
   }
   kino.log("Loop sección: " + trazaSeccion);
   const salida = { tabs: tabs, tab: tab.id, rows: rows };
@@ -1344,7 +1421,7 @@ export async function resolve(ref) {
   const autorNuevo = d.author && (d.author.unique_id || d.author.uniqueId)
     ? String(d.author.unique_id || d.author.uniqueId)
     : "";
-  recordarVideo(s, autorNuevo || autor, clip(String(d.title || (v ? v.titulo : "")), 120));
+  recordarVideo(s, autorNuevo || autor, clip(String(d.title || (v ? v.titulo : "")), 120), String(d.cover || ""));
   const conMarca = String(kino.config.get("marca") || "no").trim() === "si";
   const sinMarca = String(d.play || "");
   const conMarcaUrl = String(d.wmplay || "");
