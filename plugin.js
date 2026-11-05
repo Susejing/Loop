@@ -14,8 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Loop 0.1.7 — TikTok en Kino: tendencias por país, doramas y anime en
-// español, canales por gusto, búsqueda, creadores y enlaces pegados.
+// Loop 0.2.0 — TikTok en Kino: portada con criterio (doramas en español
+// arriba del todo, Colombia detrás), insignias en las tarjetas (Nuevo,
+// Largo, Español), géneros por tema, categorías de países Y temas, y el
+// arte de fondo del video en su ficha. Además: tendencias por país,
+// canales por gusto, búsqueda, creadores y enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
 // sesión y firma cada petición). Este plugin habla con tikwm.com, el
@@ -64,7 +67,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.1.7";
+const VERSION = "0.2.0";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -398,7 +401,7 @@ function listaConRef(ref) {
 
 // ---------- construcción de items ----------
 
-function itemDeVideo(v) {
+function itemDeVideo(v, ctx) {
   if (!v || typeof v !== "object") return null;
   const id = String(v.id || v.video_id || v.aweme_id || "");
   if (!/^\d{6,25}$/.test(id)) return null;
@@ -414,6 +417,9 @@ function itemDeVideo(v) {
   };
   const cover = v.cover || v.origin_cover || "";
   if (String(cover).indexOf("http") === 0) item.poster = String(cover);
+  // El arte de fondo de la ficha del video: su propia imagen grande.
+  const fondo = v.origin_cover || v.cover || "";
+  if (String(fondo).indexOf("http") === 0) item.backdrop = String(fondo);
   const nick = v.author && v.author.nickname ? String(v.author.nickname) : "";
   const firma = (autor ? "@" + autor : "") + (autor && nick ? " · " : "") + nick;
   if (firma) item.originalTitle = clip(firma, 120);
@@ -439,16 +445,39 @@ function itemDeVideo(v) {
       item.releaseDate = new Date(ms).toISOString().slice(0, 10);
     } catch (e) { }
   }
+  // Las insignias de la tarjeta (chips, máximo 3): «Nuevo» si se subió hace
+  // menos de tres días, «Largo» si dura cinco minutos o más (las partes de
+  // doramas se reconocen de un vistazo) y «Español» cuando sale de un tema
+  // en español. El contexto lo pone quien llama (la fila o el canal).
+  const insignias = [];
+  if (crudo > 0) {
+    const ms = crudo > 9999999999 ? crudo : crudo * 1000;
+    if (Date.now() - ms < 259200000) insignias.push("Nuevo");
+  }
+  if (seg >= 300) insignias.push("Largo");
+  if (ctx && ctx.espanol) insignias.push("Español");
+  if (insignias.length > 0) item.badges = insignias.slice(0, 3);
+  // Los géneros del video: los sabe el tema del que salió (Doramas, Anime,
+  // K-pop…), y viajan a la ficha del título.
+  if (ctx && Array.isArray(ctx.genero) && ctx.genero.length > 0) {
+    item.genres = [];
+    for (let gi = 0; gi < ctx.genero.length && item.genres.length < 5; gi++) {
+      const g = clip(ctx.genero[gi], 30);
+      if (g) item.genres.push(g);
+    }
+    if (item.genres.length === 0) delete item.genres;
+  }
+  if (ctx && ctx.espanol) item.lang = "es";
   recordarVideo(id, autor, titulo);
   return item;
 }
 
-function itemsDeVideos(d) {
+function itemsDeVideos(d, ctx) {
   const vids = videosDe(d);
   const items = [];
   const ya = {};
   for (let i = 0; i < vids.length; i++) {
-    const item = itemDeVideo(vids[i]);
+    const item = itemDeVideo(vids[i], ctx || null);
     if (!item || ya[item.id]) continue;
     ya[item.id] = 1;
     items.push(item);
@@ -525,26 +554,36 @@ function serieDeUsuario(uid, d) {
 }
 
 // Una "serie" de TikTok: un tema (anime, doramas, AMV…). Sus episodios son
-// los videos del momento de ese tema, uno tras otro.
-function serieDeTema(titulo, tag) {
-  return {
+// los videos del momento de ese tema, uno tras otro. Los géneros del tema
+// viajan con la serie (la ficha del canal los muestra).
+function serieDeTema(titulo, tag, genero) {
+  const item = {
     id: "tk.h." + String(tag).replace(/[^a-z0-9]/gi, "").toLowerCase(),
     ref: "h:" + tag,
     title: clip(titulo, 90),
     kind: "series",
     overview: "Un canal que corre solo: los videos del momento de este tema, uno tras otro" + (temaLargo(tag) ? "; los más largos salen primero." : ".")
   };
+  if (genero && genero.length > 0) {
+    item.genres = [];
+    for (let gi = 0; gi < genero.length && item.genres.length < 5; gi++) {
+      const g = clip(genero[gi], 30);
+      if (g) item.genres.push(g);
+    }
+    if (item.genres.length === 0) delete item.genres;
+  }
+  return item;
 }
 
 // ---------- portada ----------
 
 const REGIONES_PORTADA = [
-  { id: "co", titulo: "Tendencias Colombia", region: "CO" },
-  { id: "us", titulo: "Tendencias EE. UU.", region: "US" },
-  { id: "mx", titulo: "Tendencias México", region: "MX" },
-  { id: "es", titulo: "Tendencias España", region: "ES" },
-  { id: "ar", titulo: "Tendencias Argentina", region: "AR" },
-  { id: "br", titulo: "Tendencias Brasil", region: "BR" }
+  { id: "co", titulo: "Tendencias en Colombia", region: "CO" },
+  { id: "mx", titulo: "Tendencias en México", region: "MX" },
+  { id: "us", titulo: "Tendencias en EE. UU.", region: "US" },
+  { id: "es", titulo: "Tendencias en España", region: "ES" },
+  { id: "ar", titulo: "Tendencias en Argentina", region: "AR" },
+  { id: "br", titulo: "Tendencias en Brasil", region: "BR" }
 ];
 
 const CANALES_PORTADA = [
@@ -559,29 +598,45 @@ const CANALES_PORTADA = [
 // el camino de los #hashtags (usa la verificación pasada, si la hay). Sin
 // verificación no sale y las tendencias siguen igual. Los videos más
 // largos salen primero: los doramas doblados se suben en partes largas.
+// Desde la 0.2.0 es la PRIMERA fila de la portada.
 const DORAMAS_FILA = { id: "doramas", titulo: "Doramas en español", tag: "doramas en español", respaldo: "#doramas", ref: "h:doramas en español" };
 
 // Los canales por gusto: los de español primero (sus videos más largos
 // salen primero). Sin galleta, tocarlos enseña el camino del botón de
-// verificación.
+// verificación. Cada tema sabe sus géneros (viajan a las fichas) y si es
+// de español (insignia «Español» e idioma del video).
 const TEMAS = [
-  { titulo: "Doramas en español", tag: "doramas en español" },
-  { titulo: "Doramas doblados", tag: "doramas doblados" },
-  { titulo: "Anime en español", tag: "anime en español" },
-  { titulo: "Anime", tag: "#anime" },
-  { titulo: "AMV", tag: "#amv" },
-  { titulo: "K-pop", tag: "#kpop" },
-  { titulo: "Baile", tag: "#dance" },
-  { titulo: "Memes", tag: "#memes" },
-  { titulo: "Fútbol", tag: "#futbol" },
-  { titulo: "Videojuegos", tag: "#gaming" },
-  { titulo: "Recetas", tag: "#recetas" },
-  { titulo: "Humor", tag: "#humor" }
+  { titulo: "Doramas en español", tag: "doramas en español", genero: ["Doramas"], espanol: true },
+  { titulo: "Doramas doblados", tag: "doramas doblados", genero: ["Doramas"], espanol: true },
+  { titulo: "Anime en español", tag: "anime en español", genero: ["Anime"], espanol: true },
+  { titulo: "Anime", tag: "#anime", genero: ["Anime"] },
+  { titulo: "AMV", tag: "#amv", genero: ["Anime", "Música"] },
+  { titulo: "K-pop", tag: "#kpop", genero: ["K-pop", "Música"] },
+  { titulo: "Baile", tag: "#dance", genero: ["Baile"] },
+  { titulo: "Memes", tag: "#memes", genero: ["Humor"] },
+  { titulo: "Fútbol", tag: "#futbol", genero: ["Deportes", "Fútbol"] },
+  { titulo: "Videojuegos", tag: "#gaming", genero: ["Videojuegos"] },
+  { titulo: "Recetas", tag: "#recetas", genero: ["Cocina"] },
+  { titulo: "Humor", tag: "#humor", genero: ["Humor"] }
 ];
 
+// El contexto de un tema (sus géneros y si es de español) para los videos
+// que salen de él — en «Ver más», en los canales y en la búsqueda dentro.
+// El #doramas mundial (el respaldo de la fila de doramas) también sabe su
+// género; un #hashtag que la persona escribió a mano no trae contexto y
+// sus videos salen sin insignias ni géneros, como siempre.
+function ctxDeTema(kw) {
+  const k = String(kw || "").trim();
+  for (let i = 0; i < TEMAS.length; i++) {
+    if (TEMAS[i].tag === k) return { genero: TEMAS[i].genero, espanol: !!TEMAS[i].espanol };
+  }
+  if (k === "#doramas") return { genero: ["Doramas"] };
+  return null;
+}
+
 const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
-  { id: "pe", titulo: "Tendencias Perú", region: "PE" },
-  { id: "cl", titulo: "Tendencias Chile", region: "CL" }
+  { id: "pe", titulo: "Tendencias en Perú", region: "PE" },
+  { id: "cl", titulo: "Tendencias en Chile", region: "CL" }
 ]);
 
 export async function home() {
@@ -594,6 +649,44 @@ export async function home() {
   // la portada a los 20 segundos. Así la portada tarda lo que tarda la
   // última fila, no la suma de las siete.
   const pedidas = [];
+  // La fila de doramas en español ABRE la portada (petición del usuario):
+  // primera en la pantalla y primera en el escalonado. Sin ella (falta la
+  // verificación o la respuesta) las tendencias siguen su curso igual.
+  pedidas.push((async function (f, retraso) {
+    await espera(retraso);
+    try {
+      let d = await tkLlamada("fila doramas", function () {
+        return tkBuscar(f.tag, "0", 18, 6000);
+      });
+      let items = itemsDeVideos(d, { genero: ["Doramas"], espanol: true });
+      if (items.length === 0 && f.respaldo) {
+        // El buscador en español no trajo nada: el #doramas mundial.
+        await espera(1100);
+        try {
+          d = await tkLlamada("fila doramas (respaldo)", function () {
+            return tkBuscar(f.respaldo, "0", 18, 6000);
+          });
+          items = itemsDeVideos(d, { genero: ["Doramas"] });
+        } catch (e2) {
+          items = [];
+        }
+      }
+      if (items.length > 0) {
+        // Los doramas doblados se suben en partes largas: los largos primero.
+        items = ordenarLargos(items);
+        progreso.detalle.push("doramas " + items.length);
+      } else {
+        progreso.detalle.push("doramas vacía");
+      }
+      trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
+      return { f: f, items: items };
+    } catch (e) {
+      // Sin verificación pasada (o sin respuesta): la fila no sale.
+      progreso.detalle.push("doramas omitida (falta verificación o respuesta)");
+      trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
+      return { f: f, items: [] };
+    }
+  })(DORAMAS_FILA, 0));
   for (let i = 0; i < REGIONES_PORTADA.length; i++) {
     pedidas.push((async function (f, retraso) {
       await espera(retraso);
@@ -616,45 +709,8 @@ export async function home() {
         trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
         return { f: f, items: [] };
       }
-    })(REGIONES_PORTADA[i], i * 1100));
+    })(REGIONES_PORTADA[i], (i + 1) * 1100));
   }
-  // La fila de doramas en español va última en el escalonado (sigue en
-  // paralelo con las demás; solo empieza un segundo después de la última).
-  pedidas.push((async function (f, retraso) {
-    await espera(retraso);
-    try {
-      let d = await tkLlamada("fila doramas", function () {
-        return tkBuscar(f.tag, "0", 18, 6000);
-      });
-      let items = itemsDeVideos(d);
-      if (items.length === 0 && f.respaldo) {
-        // El buscador en español no trajo nada: el #doramas mundial.
-        await espera(1100);
-        try {
-          d = await tkLlamada("fila doramas (respaldo)", function () {
-            return tkBuscar(f.respaldo, "0", 18, 6000);
-          });
-          items = itemsDeVideos(d);
-        } catch (e2) {
-          items = [];
-        }
-      }
-      if (items.length > 0) {
-        // Los doramas doblados se suben en partes largas: los largos primero.
-        items = ordenarLargos(items);
-        progreso.detalle.push("doramas " + items.length);
-      } else {
-        progreso.detalle.push("doramas vacía");
-      }
-      trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
-      return { f: f, items: items };
-    } catch (e) {
-      // Sin verificación pasada (o sin respuesta): la fila no sale.
-      progreso.detalle.push("doramas omitida (falta verificación o respuesta)");
-      trazaPortada = progreso.ok + "/" + REGIONES_PORTADA.length + " filas (" + progreso.detalle.join(" · ") + ")";
-      return { f: f, items: [] };
-    }
-  })(DORAMAS_FILA, REGIONES_PORTADA.length * 1100));
   const filas = await Promise.all(pedidas);
   const salida = [];
   let ok = 0;
@@ -671,7 +727,7 @@ export async function home() {
         title: f.titulo,
         items: r.items,
         ref: ref,
-        genre: f.region ? "entretenimiento" : "drama"
+        genre: f.region ? "entretenimiento" : "series"
       });
     }
   }
@@ -693,7 +749,7 @@ export async function home() {
     });
     const temas = [];
     for (let i = 0; i < TEMAS.length; i++) {
-      temas.push(serieDeTema(TEMAS[i].titulo, TEMAS[i].tag));
+      temas.push(serieDeTema(TEMAS[i].titulo, TEMAS[i].tag, TEMAS[i].genero));
     }
     salida.push({
       id: "fila.temas",
@@ -716,6 +772,12 @@ export async function categories() {
   const fuera = [];
   for (let i = 0; i < REGIONES_CATEGORIAS.length; i++) {
     fuera.push({ id: "cat." + REGIONES_CATEGORIAS[i].id, title: REGIONES_CATEGORIAS[i].titulo, ref: "r:" + REGIONES_CATEGORIAS[i].region });
+  }
+  // Los temas también son categorías: el directorio de la pestaña
+  // Categorías queda completo — países para las tendencias y un tema por
+  // cada canal de «Canales por gusto».
+  for (let i = 0; i < TEMAS.length; i++) {
+    fuera.push({ id: "cat.tema." + String(TEMAS[i].tag).replace(/[^a-z0-9]/gi, "").toLowerCase(), title: TEMAS[i].titulo, ref: "h:" + TEMAS[i].tag });
   }
   return fuera;
 }
@@ -797,7 +859,7 @@ export async function search(query) {
     try {
       const qDentro = tema + " " + q;
       const d = await tkLlamada("búsqueda dentro", function () { return tkBuscar(qDentro, "0", 30); });
-      return itemsDeVideos(d);
+      return itemsDeVideos(d, ctxDeTema(tema));
     } catch (e) {
       return null;
     }
@@ -901,11 +963,13 @@ export async function browse(ref, cursor) {
   }
 
   // Un tema (#hashtag o palabras en español): el camino con verificación.
+  // Sus videos salen con el contexto del tema (géneros e insignia de
+  // español) para que las tarjetas y las fichas hablen.
   if (ref.indexOf("h:") === 0) {
     const kw = ref.slice(2);
     try {
       const d = await tkLlamada("ver más", function () { return tkBuscar(kw, c, 30); });
-      const items = paginaBrowse(ref, itemsDeVideos(d));
+      const items = paginaBrowse(ref, itemsDeVideos(d, ctxDeTema(kw)));
       const r = { items: items };
       const cur = cursorSiguiente(d, c);
       if (items.length > 0 && cur !== null) r.next = cur;
@@ -980,13 +1044,13 @@ export async function episodes(ref) {
     const kw = ref.slice(2);
     try {
       const d = await tkLlamada("canal " + kw, function () { return tkBuscar(kw, "0", 30); });
-      let items = itemsDeVideos(d);
+      let items = itemsDeVideos(d, ctxDeTema(kw));
       const cur2 = cursorSiguiente(d, "0");
       if (items.length > 0 && cur2 !== null && items.length < 60) {
         await espera(1100);
         try {
           const d2 = await tkLlamada("canal " + kw + " (pág 2)", function () { return tkBuscar(kw, cur2, 30); });
-          items = fusionarItems(items, itemsDeVideos(d2));
+          items = fusionarItems(items, itemsDeVideos(d2, ctxDeTema(kw)));
         } catch (e2) {
           // La primera página alcanza.
         }

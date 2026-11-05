@@ -2,9 +2,9 @@
   "id": "loop",
   "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "icon": "icon.png",
-  "description": "TikTok en Kino: tendencias por país, doramas y anime en español (los videos largos primero), canales por gusto, búsqueda con más resultados, perfiles de creadores y enlaces pegados. Con descripción y fecha de cada video. Videos sin marca de agua.",
+  "description": "TikTok en Kino: portada con criterio (doramas en español arriba del todo), insignias en las tarjetas (Nuevo, Largo, Español), géneros por tema, categorías de países y temas, tendencias por país, búsqueda, perfiles de creadores y enlaces pegados. Videos sin marca de agua.",
   "apiVersion": 11,
   "entry": "plugin.js",
   "hosts": [
