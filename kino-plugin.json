@@ -2,9 +2,9 @@
   "id": "loop",
   "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "icon": "icon.png",
-  "description": "TikTok en Kino: portada con criterio (doramas en español arriba del todo), insignias en las tarjetas (Nuevo, Largo, Español), géneros por tema, categorías de países y temas, tendencias por país, búsqueda, perfiles de creadores y enlaces pegados. Videos sin marca de agua.",
+  "description": "TikTok en Kino: sección propia con destacado y pestañas por gusto, portada con doramas en español arriba, insignias (Nuevo, Largo, Español), géneros por tema, categorías de países y temas, búsqueda, perfiles de creadores y enlaces pegados. Videos sin marca de agua.",
   "apiVersion": 11,
   "entry": "plugin.js",
   "hosts": [
@@ -23,6 +23,16 @@
     "resolve",
     "scopedSearch"
   ],
+  "section": {
+    "label": "Loop"
+  },
+  "theme": {
+    "accent": "#25F4EE",
+    "onAccent": "#00252B",
+    "background": "#0A0A0A",
+    "surface": "#18181F",
+    "highlight": "#F5F5F7"
+  },
   "enhancements": {
     "20": {
       "visualBrowser": true

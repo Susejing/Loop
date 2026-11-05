@@ -14,11 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Loop 0.2.0 — TikTok en Kino: portada con criterio (doramas en español
-// arriba del todo, Colombia detrás), insignias en las tarjetas (Nuevo,
-// Largo, Español), géneros por tema, categorías de países Y temas, y el
-// arte de fondo del video en su ficha. Además: tendencias por país,
-// canales por gusto, búsqueda, creadores y enlaces pegados.
+// Loop 0.3.0 — TikTok en Kino: sección propia «Loop» en la app — un video
+// destacado arriba y pestañas por gusto (Doramas, Anime, Música, Humor y
+// más, Países) — y colores propios de TikTok: el acento cian pinta la
+// barra y los controles del reproductor mientras suena un video de Loop.
+// Viene de la 0.2.0: portada con criterio (doramas en español arriba del
+// todo, Colombia detrás), insignias en las tarjetas (Nuevo, Largo,
+// Español), géneros por tema, categorías de países Y temas, y el arte de
+// fondo del video en su ficha. Además: tendencias por país, canales por
+// gusto, búsqueda, creadores y enlaces pegados.
 //
 // Cómo funciona: TikTok no entrega los videos así nada más (su app exige
 // sesión y firma cada petición). Este plugin habla con tikwm.com, el
@@ -41,6 +45,11 @@
 //   español" de la portada tampoco sale). Los canales en español y la
 //   fila de doramas muestran los videos MÁS LARGOS primero: los doramas
 //   y animes doblados se suben en partes largas, no en clips corticos.
+// — La sección propia «Loop» (chip arriba del Inicio en el teléfono,
+//   barra lateral en la TV) abre con un video destacado arriba y sus
+//   pestañas por gusto. Sin verificación llega a «Países» (las tendencias
+//   no necesitan galleta); con ella, a «Doramas». Una pestaña de temas
+//   sin verificación muestra sus canales, como hace la portada.
 // — La "descripción" de un video de TikTok ES su propio texto (caption):
 //   el título llega más completo y la descripción entera, con la fecha de
 //   subida y las cifras (vistas, me gusta), va en el detalle del video.
@@ -67,7 +76,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -77,6 +86,7 @@ let trazaPortada = "";
 let trazaBusqueda = "";
 let trazaResolve = "";
 let trazaVentana = "";
+let trazaSeccion = "";
 let ultimoResolve = null;
 
 // ---------- helpers de texto y tiempo ----------
@@ -766,6 +776,165 @@ export async function home() {
   return salida;
 }
 
+// ---------- sección propia (la entrada «Loop» de la app) ----------
+
+// Las pestañas de la sección propia: los gustos de «Canales por gusto»
+// agrupados para elegir de un vistazo. «Países» trae las tendencias por
+// región (el camino SIN verificación); el resto, los temas (el camino de
+// los #hashtags, que usa la verificación pasada en Ajustes). Las
+// etiquetas son cortas a propósito: es lo que se lee en el chip.
+const SECCION_TABS = [
+  { id: "doramas", label: "Doramas", tags: ["doramas en español", "doramas doblados"] },
+  { id: "anime", label: "Anime", tags: ["anime en español", "#anime", "#amv"] },
+  { id: "musica", label: "Música", tags: ["#kpop", "#dance"] },
+  { id: "varios", label: "Humor y más", tags: ["#memes", "#humor", "#futbol", "#gaming", "#recetas"] },
+  { id: "paises", label: "Países", regiones: true }
+];
+
+function temaDeTag(tag) {
+  const k = String(tag || "");
+  for (let i = 0; i < TEMAS.length; i++) {
+    if (TEMAS[i].tag === k) return TEMAS[i];
+  }
+  return null;
+}
+
+// El destacado de la sección: el primer video de la primera fila que
+// llegó. Su imagen es el arte grande del propio video — la URL se acaba
+// de pedir (las de TikTok expiran a las horas, pero Kino la carga en el
+// momento); si no trae, el destacado sale solo con su texto.
+function heroDe(item) {
+  if (!item) return null;
+  const hero = { title: clip(item.title || "Tendencia de TikTok", 90) };
+  hero.text = clip(item.overview || item.originalTitle || "Un video del momento en TikTok.", 300);
+  const img = (item.backdrop && String(item.backdrop).indexOf("http") === 0)
+    ? item.backdrop
+    : ((item.poster && String(item.poster).indexOf("http") === 0) ? item.poster : "");
+  if (img) hero.image = String(img);
+  return hero;
+}
+
+// Las filas de videos de una pestaña de temas: se piden a la vez con el
+// mismo escalonado de la portada (el plan gratuito de tikwm acepta más o
+// menos una petición por segundo). La que falla se omite y las demás
+// siguen.
+async function filasDeSeccionTemas(tab, tags) {
+  const pedidas = [];
+  for (let i = 0; i < tags.length; i++) {
+    pedidas.push((async function (tag, retraso) {
+      await espera(retraso);
+      const tema = temaDeTag(tag);
+      if (!tema) return { tag: tag, items: [] };
+      try {
+        const d = await tkLlamada("sección " + tema.tag, function () { return tkBuscar(tema.tag, "0", 18, 6000); });
+        let items = itemsDeVideos(d, { genero: tema.genero, espanol: !!tema.espanol });
+        if (temaLargo(tema.tag)) items = ordenarLargos(items);
+        return { tag: tag, items: items };
+      } catch (e) {
+        return { tag: tag, items: [] };
+      }
+    })(tags[i], i * 1100));
+  }
+  return await Promise.all(pedidas);
+}
+
+// La sección propia: la entrada «Loop» de la app (chip arriba del Inicio
+// en el teléfono, barra lateral en la TV) con un video destacado y sus
+// pestañas por gusto. Sin verificación pasada llega a «Países» (las
+// tendencias no necesitan galleta y la sección luce completa desde el
+// primer toque); una pestaña de temas que no pudo traer videos muestra
+// sus canales, como hace la portada.
+export async function section(arg) {
+  const pedida = arg && typeof arg.tab === "string" ? arg.tab : null;
+  let tab = null;
+  for (let i = 0; i < SECCION_TABS.length; i++) {
+    if (SECCION_TABS[i].id === pedida) tab = SECCION_TABS[i];
+  }
+  if (!tab) tab = galletaActual() ? SECCION_TABS[0] : SECCION_TABS[SECCION_TABS.length - 1];
+  const tabs = [];
+  for (let i = 0; i < SECCION_TABS.length; i++) {
+    tabs.push({ id: SECCION_TABS[i].id, label: SECCION_TABS[i].label });
+  }
+  const rows = [];
+  let hero = null;
+  if (tab.regiones) {
+    // «Países»: las tendencias de cada región, el camino sin verificación.
+    const pedidas = [];
+    for (let i = 0; i < REGIONES_PORTADA.length; i++) {
+      pedidas.push((async function (f, retraso) {
+        await espera(retraso);
+        try {
+          const d = await tkLlamada("sección " + f.region, function () { return tkTendencias(f.region, "0", 18, 6000); });
+          return { f: f, items: itemsDeVideos(d) };
+        } catch (e) {
+          return { f: f, items: [] };
+        }
+      })(REGIONES_PORTADA[i], i * 1100));
+    }
+    const filas = await Promise.all(pedidas);
+    for (let i = 0; i < filas.length; i++) {
+      const r = filas[i];
+      if (r.items.length > 0) {
+        guardarLista("r:" + r.f.region, r.items);
+        rows.push({
+          id: "sec.paises." + r.f.id,
+          title: r.f.titulo,
+          items: r.items,
+          ref: "r:" + r.f.region,
+          genre: "entretenimiento"
+        });
+        if (!hero) hero = heroDe(r.items[0]);
+      }
+    }
+    if (rows.length === 0) {
+      // Todo falló (¿límite del plan?): los canales de país, que no
+      // necesitan red.
+      rows.push({
+        id: "sec.paises.canales",
+        title: "Canales que corren solos",
+        items: [
+          serieDeRegion("CO", "Canal Colombia", ""),
+          serieDeRegion("US", "Canal EE. UU.", ""),
+          serieDeRegion("MX", "Canal México", "")
+        ],
+        genre: "otros"
+      });
+    }
+    trazaSeccion = tab.label + ": " + rows.length + " filas de tendencias";
+  } else {
+    const filas = await filasDeSeccionTemas(tab, tab.tags);
+    for (let i = 0; i < filas.length; i++) {
+      const tema = temaDeTag(filas[i].tag);
+      if (!tema || filas[i].items.length === 0) continue;
+      guardarLista("h:" + tema.tag, filas[i].items);
+      rows.push({
+        id: "sec." + tab.id + "." + String(tema.tag).replace(/[^a-z0-9]/gi, "").toLowerCase(),
+        title: tema.titulo,
+        items: filas[i].items,
+        ref: "h:" + tema.tag,
+        genre: "otros"
+      });
+      if (!hero) hero = heroDe(filas[i].items[0]);
+    }
+    if (rows.length === 0) {
+      // Sin verificación (o sin respuesta): los canales del gusto, que no
+      // piden red; al tocarlos, la app enseña el camino del botón de
+      // verificación, como con la portada.
+      const canales = [];
+      for (let i = 0; i < tab.tags.length; i++) {
+        const tema = temaDeTag(tab.tags[i]);
+        if (tema) canales.push(serieDeTema(tema.titulo, tema.tag, tema.genero));
+      }
+      rows.push({ id: "sec." + tab.id + ".canales", title: "Canales de este gusto", items: canales, genre: "otros" });
+    }
+    trazaSeccion = tab.label + ": " + rows.length + " filas de temas";
+  }
+  kino.log("Loop sección: " + trazaSeccion);
+  const salida = { tabs: tabs, tab: tab.id, rows: rows };
+  if (hero) salida.hero = hero;
+  return salida;
+}
+
 // ---------- categorías ----------
 
 export async function categories() {
@@ -1283,6 +1452,7 @@ function informeDebug() {
   lineas.push("Loop " + VERSION + " — informe técnico. (Estas líneas no se pueden reproducir.)");
   lineas.push("Marca de agua: " + String(kino.config.get("marca") || "no"));
   lineas.push("Portada: " + (trazaPortada || "(la portada aún no se ha abierto)"));
+  lineas.push("Sección: " + (trazaSeccion || "(la sección propia aún no se ha abierto)"));
   lineas.push("Galleta: " + (g
     ? "presente (gana el camino de #hashtags y @perfiles)"
     : "ninguna (los #hashtags y los @perfiles pueden pedir verificación)"));
