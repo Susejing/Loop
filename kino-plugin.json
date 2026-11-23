@@ -1,13 +1,12 @@
 {
   "id": "loop",
-  "name": "Loop — TikTok",
+  "name": "Loop - TikTok",
   "author": "Susejing",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "icon": "icon.png",
-  "description": "TikTok en Kino: sección propia con destacado y pestañas llenas: continuar viendo, más de cada tema y canales del gusto. Colores TikTok en el reproductor, doramas en español arriba, insignias (Nuevo, Largo, Español), géneros, categorías de países y temas, perfiles y enlaces. Sin marca de agua. Verificación de hashtags/perfiles válida ~7 días.",
+  "description": "TikTok en Kino: tendencias por pais, busqueda, perfiles y enlaces. Sin marca de agua. Verificacion de hashtags valida unos 7 dias.",
   "apiVersion": 11,
   "entry": "plugin.js",
-  "resolveAhead": true,
   "hosts": [
     "tikwm.com",
     "www.tikwm.com",
@@ -21,12 +20,8 @@
     "home",
     "browse",
     "episodes",
-    "resolve",
-    "scopedSearch"
+    "resolve"
   ],
-  "section": {
-    "label": "Loop"
-  },
   "theme": {
     "accent": "#25F4EE",
     "onAccent": "#00252B",
@@ -42,9 +37,9 @@
   "settings": [
     {
       "key": "reproduccion",
-      "label": "Reproducción",
+      "label": "Reproduccion",
       "type": "section",
-      "hint": "Cómo quieres ver los videos de TikTok."
+      "hint": "Como quieres ver los videos de TikTok."
     },
     {
       "key": "marca",
@@ -70,16 +65,16 @@
     },
     {
       "key": "verif",
-      "label": "Búsqueda y perfiles",
+      "label": "Busqueda y perfiles",
       "type": "section",
-      "hint": "Los #hashtags y los @perfiles a veces piden una verificación de seguridad. Pásala una vez con el botón de abajo; queda guardada unos 7 días (o hasta que TikTok la pida de nuevo). Las tendencias de países no la necesitan."
+      "hint": "Los #hashtags y los @perfiles a veces piden verificacion. Pasala una vez; queda unos 7 dias. Las tendencias no la necesitan."
     },
     {
       "key": "verificacion",
-      "label": "Pasar verificación",
+      "label": "Pasar verificacion",
       "type": "action",
-      "hint": "Abre una ventanita de TikTok; espera a que cargue y toca Listo. Solo hace falta cuando fallen hashtags o perfiles.",
-      "confirm": "Se abrirá una ventana de tikwm.com. Espera a que la página cargue y toca Listo."
+      "hint": "Abre una ventanita; espera a que cargue y toca Listo.",
+      "confirm": "Se abrira una ventana de tikwm.com. Espera a que cargue y toca Listo."
     }
   ],
   "color": "#FE2C55",
