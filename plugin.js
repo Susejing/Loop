@@ -1,1 +1,1 @@
-file:///home/workdir/artifacts/loop-plugin-0.4.1.js
+/home/workdir/artifacts/loop-plugin-0.4.1.js
