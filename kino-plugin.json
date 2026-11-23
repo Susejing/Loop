@@ -1,10 +1,10 @@
 {
   "id": "loop",
-  "name": "Loop - TikTok",
+  "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.4.2",
+  "version": "0.4.0",
   "icon": "icon.png",
-  "description": "TikTok en Kino: tendencias por pais, busqueda, perfiles y enlaces. Sin marca de agua. Verificacion de hashtags valida unos 7 dias.",
+  "description": "TikTok en Kino: sección propia con destacado y pestañas llenas: continuar viendo, más de cada tema y canales del gusto. Colores TikTok en el reproductor, doramas en español arriba, insignias (Nuevo, Largo, Español), géneros, categorías de países y temas, perfiles y enlaces. Sin marca de agua.",
   "apiVersion": 11,
   "entry": "plugin.js",
   "hosts": [
@@ -20,8 +20,12 @@
     "home",
     "browse",
     "episodes",
-    "resolve"
+    "resolve",
+    "scopedSearch"
   ],
+  "section": {
+    "label": "Loop"
+  },
   "theme": {
     "accent": "#25F4EE",
     "onAccent": "#00252B",
@@ -37,9 +41,9 @@
   "settings": [
     {
       "key": "reproduccion",
-      "label": "Reproduccion",
+      "label": "Reproducción",
       "type": "section",
-      "hint": "Como quieres ver los videos de TikTok."
+      "hint": "Cómo quieres ver los videos de TikTok."
     },
     {
       "key": "marca",
@@ -65,18 +69,18 @@
     },
     {
       "key": "verif",
-      "label": "Busqueda y perfiles",
+      "label": "Búsqueda y perfiles",
       "type": "section",
-      "hint": "Los #hashtags y los @perfiles a veces piden verificacion. Pasala una vez; queda unos 7 dias. Las tendencias no la necesitan."
+      "hint": "Los #hashtags y los @perfiles de TikTok a veces piden una verificación de seguridad. Pásala una vez con el botón de abajo; queda guardada unas horas y la búsqueda, los perfiles y los canales por gusto vuelven a funcionar."
     },
     {
       "key": "verificacion",
-      "label": "Pasar verificacion",
+      "label": "Pasar verificación",
       "type": "action",
-      "hint": "Abre una ventanita; espera a que cargue y toca Listo.",
-      "confirm": "Se abrira una ventana de tikwm.com. Espera a que cargue y toca Listo."
+      "hint": "Abre una ventanita de TikTok; espera a que cargue y toca Listo.",
+      "confirm": "Se abrirá una ventana de tikwm.com. Espera a que la página cargue y toca Listo."
     }
   ],
   "color": "#FE2C55",
-  "debug": false
+  "debug": true
 }
