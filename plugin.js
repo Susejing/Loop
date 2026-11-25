@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.4.3";
+const VERSION = "0.4.4";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -377,6 +377,23 @@ function cursorSiguiente(d, c) {
 }
 
 // ---------- memoria del plugin ----------
+
+// La fila «Continuar viendo» SOLO cita videos que de verdad se
+// reprodujeron (antes citaba los recién listados: por eso aparecían
+// videos que nadie había puesto). Se guarda en el almacén (30 días).
+var continuar = [];
+var enPrecarga = false;
+function recordarContinuar(id, titulo, cover, autor) {
+  if (!id || enPrecarga) return;
+  continuar = continuar.filter(function (c) { return c.id !== id; });
+  continuar.unshift({ id: id, titulo: titulo || "Video de TikTok", cover: cover || "", autor: autor || "", t: Date.now() });
+  if (continuar.length > 24) continuar = continuar.slice(0, 24);
+  setJson("continuar", continuar, 30 * 24 * 60 * 60 * 1000);
+}
+try {
+  const continuarGuardada = getJson("continuar", null);
+  if (Array.isArray(continuarGuardada)) continuar = continuarGuardada;
+} catch (e) { }
 
 // Lo que se sabe de cada video (quién lo subió, su título): al reproducir
 // hay que armar el enlace canónico de TikTok, que lleva el @usuario.
@@ -678,6 +695,24 @@ const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
   { id: "cl", titulo: "Tendencias en Chile", region: "CL" }
 ]);
 
+// Un renglón de la portada al almacén, compacto (8 videos con lo mínimo,
+// kind incluido para que el canal siga funcionando): la próxima apertura
+// arranca con lo ya traído aunque el reloj corra.
+function guardarFilaEnCache(idFila, items) {
+  try {
+    const compacto = [];
+    for (let i = 0; i < items.length && compacto.length < 8; i++) {
+      const it = items[i];
+      if (!it || !it.ref) continue;
+      compacto.push({ id: it.id, ref: it.ref, title: it.title || "Video de TikTok", kind: "movie", poster: it.poster || "", runtimeMinutes: it.runtimeMinutes || 0 });
+    }
+    if (compacto.length === 0) return;
+    const cf = getJson("portada_filas", {}) || {};
+    cf[idFila] = { t: Date.now(), items: compacto };
+    setJson("portada_filas", cf, 3600000);
+  } catch (e) { }
+}
+
 export async function home() {
   // La portada completa se recuerda 20 minutos: reabrir la app es
   // instantáneo y el plan gratuito de tikwm recibe menos peticiones.
@@ -686,6 +721,15 @@ export async function home() {
     if (enCache && enCache.rows && enCache.rows.length > 0 && enCache.t && (Date.now() - enCache.t) < PORTADA_CACHE_MS) {
       return enCache.rows;
     }
+  } catch (e) { }
+  // Memoria por fila (45 minutos fresca, 1 hora en el almacén): lo ya
+  // traído sirve de una vez; si una apertura no alcanza, lo que faltó
+  // llega en la siguiente. Así el Inicio NUNCA vuelve a pasarse de los
+  // 20 segundos de Kino.
+  const cacheFilas = {};
+  try {
+    const cf = getJson("portada_filas", null);
+    if (cf && typeof cf === "object") for (const k in cf) cacheFilas[k] = cf[k];
   } catch (e) { }
   const posters = {};
   const progreso = { ok: 0, detalle: [] };
@@ -701,6 +745,10 @@ export async function home() {
   // verificación o la respuesta) las tendencias siguen su curso igual.
   pedidas.push((async function (f, retraso) {
     await espera(retraso);
+    try {
+      const enCache = cacheFilas[f.id];
+      if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0 && enCache.t && (Date.now() - enCache.t) < 2700000) return { f: f, items: enCache.items };
+    } catch (eC) { }
     try {
       let d = await tkLlamada("fila doramas", function () {
         return tkBuscar(f.tag, "0", 18, 6000);
@@ -721,6 +769,7 @@ export async function home() {
       if (items.length > 0) {
         // Los doramas doblados se suben en partes largas: los largos primero.
         items = ordenarLargos(items);
+        guardarFilaEnCache(f.id, items);
         progreso.detalle.push("doramas " + items.length);
       } else {
         progreso.detalle.push("doramas vacía");
@@ -738,11 +787,16 @@ export async function home() {
     pedidas.push((async function (f, retraso) {
       await espera(retraso);
       try {
+        const enCache = cacheFilas[f.id];
+        if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0 && enCache.t && (Date.now() - enCache.t) < 2700000) return { f: f, items: enCache.items };
+      } catch (eC) { }
+      try {
         const d = await tkLlamada("portada " + f.region, function () {
           return tkTendencias(f.region, "0", 18, 6000);
         });
         const items = itemsDeVideos(d);
         if (items.length > 0) {
+          guardarFilaEnCache(f.id, items);
           progreso.ok = progreso.ok + 1;
           progreso.detalle.push(f.region + " " + items.length);
         } else {
@@ -758,7 +812,28 @@ export async function home() {
       }
     })(REGIONES_PORTADA[i], (i + 1) * 1100));
   }
-  const filas = await Promise.all(pedidas);
+  // Límite interno de 16 segundos: la app corta el home a los 20. Con lo
+  // que haya llegado se arma la portada (con la memoria por fila, lo que
+  // faltó se completa en la siguiente apertura). Las filas que llegan
+  // después igual quedan guardadas para la próxima.
+  const resultados = [];
+  for (let i = 0; i < pedidas.length; i++) {
+    resultados.push(null);
+    pedidas[i] = pedidas[i].then(function (r) { resultados[i] = r; return r; });
+  }
+  let filas = null;
+  try {
+    filas = await Promise.race([
+      Promise.all(pedidas),
+      espera(16000).then(function () { return null; })
+    ]);
+  } catch (eCorte) {
+    filas = null;
+  }
+  if (filas === null) {
+    filas = [];
+    for (let i = 0; i < resultados.length; i++) if (resultados[i]) filas.push(resultados[i]);
+  }
   const salida = [];
   let ok = 0;
   for (let i = 0; i < filas.length; i++) {
@@ -904,16 +979,12 @@ async function filasDeSeccionTemas(tab, filas) {
 // registro las guarda). Tocar uno lo reproduce donde estaba. Solo sale la
 // fila si hay al menos tres.
 function filaContinuar() {
-  const claves = [];
-  for (const id in vistos) claves.push(id);
-  claves.sort(function (a, b) { return (vistos[b].t || 0) - (vistos[a].t || 0); });
   const items = [];
-  for (let i = 0; i < claves.length && items.length < 12; i++) {
-    const id = claves[i];
-    const v = vistos[id];
-    const it = { id: "tk.v." + id, ref: "v:" + id, title: clip(v.titulo || "Video de TikTok", 120), kind: "movie" };
-    if (v.cover) it.poster = v.cover;
-    if (v.autor) it.originalTitle = clip("@" + v.autor, 120);
+  for (let i = 0; i < continuar.length && items.length < 12; i++) {
+    const c = continuar[i];
+    const it = { id: "tk.v." + c.id, ref: "v:" + c.id, title: clip(c.titulo || "Video de TikTok", 120), kind: "movie" };
+    if (c.cover && String(c.cover).indexOf("http") === 0) it.poster = c.cover;
+    if (c.autor) it.originalTitle = clip("@" + c.autor, 120);
     items.push(it);
   }
   return items;
@@ -940,7 +1011,7 @@ export async function section(arg) {
   let hero = null;
   // «Continuar viendo»: lo último que se miró, en todas las pestañas.
   const cont = filaContinuar();
-  if (cont.length >= 3) {
+  if (cont.length >= 2) {
     rows.push({ id: "sec.continuar", title: "Continuar viendo", items: cont, genre: "otros" });
   }
   if (tab.regiones) {
@@ -1407,7 +1478,7 @@ export async function episodes(ref) {
 
 // ---------- resolución: el corazón ----------
 
-export async function resolve(ref) {
+export async function resolve(ref, opciones) {
   let s = String(ref || "");
   if (s.indexOf("v:") === 0) s = s.slice(2);
   if (s.indexOf("e:") === 0) s = s.slice(2);
@@ -1459,6 +1530,11 @@ export async function resolve(ref) {
       userMessage: "Este video no tiene enlace de reproducción ahora mismo. Prueba con otro."
     });
   }
+  // Este video sí se está reproduciendo de verdad: entra a «Continuar
+  // viendo». La precarga (prepare) pasa con noRecordar y no cuenta.
+  if (!(opciones && opciones.noRecordar)) {
+    recordarContinuar(s, clip(String(d.title || (v ? v.titulo : "")), 120), String(d.cover || ""), autorNuevo || autor);
+  }
   const stream = { url: url, mime: "video/mp4" };
   stream.label = (url === sinMarca && sinMarca && !conMarca) ? "TikTok sin marca de agua" : "TikTok";
   trazaResolve = "tikwm: " + stream.label + " (" + clip(String(d.title || ""), 40) + ")";
@@ -1471,7 +1547,7 @@ export async function resolve(ref) {
 // al instante. Como los enlaces de TikTok expiran en horas, esto se hace
 // al momento de listar, nunca mucho tiempo antes.
 export async function prepare(ref) {
-  try { return await resolve(ref); } catch (e) { return null; }
+  try { return await resolve(ref, { noRecordar: true }); } catch (e) { return null; }
 }
 
 // ---------- estado en Ajustes ----------
@@ -1571,6 +1647,7 @@ function informeDebug() {
   lineas.push("Búsqueda: " + (trazaBusqueda || "(aún no se ha buscado)"));
   lineas.push("Reproducción: " + (trazaResolve || "(nada reproducido desde la actualización)"));
   lineas.push("Videos recordados: " + Object.keys(vistos).length + " (para enlaces y canales)");
+  lineas.push("Continuar viendo (videos reproducidos): " + continuar.length);
   lineas.push("Listas en memoria: " + Object.keys(cacheListas).length + " (filas, búsquedas, perfiles)");
   const items = [];
   for (let i = 0; i < lineas.length; i++) {
