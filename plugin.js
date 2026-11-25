@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.4.6";
+const VERSION = "0.4.7";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -94,7 +94,7 @@ const PORTADA_CACHE_MS = 20 * 60 * 1000;
 // El espejo de tikwm: si el dominio principal no responde (colgado, lento
 // o bloqueando), la misma petición sale por el espejo tikwm.org.
 const BASE_PRINCIPAL = "https://tikwm.com/api/";
-const BASE_ESPEJO = "https://tikwm.org/api/";
+const BASE_ESPEJO = "https://www.tikwm.com/api/"; // el subdominio www ya está aprobado como host
 
 // ---------- diagnóstico (se ve con "debug" en el buscador) ----------
 
@@ -232,7 +232,7 @@ async function pedirJson(url, timeoutMs, extra) {
           timeoutMs: timeoutMs || 15000
         }).then(function (v) { return { r: v }; }, function (e) { ultimoError = e; return { e: e }; }),
         espera((timeoutMs || 15000) + 500).then(function () {
-          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : "el espejo tikwm.org")) };
+          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : "el espejo www.tikwm.com")) };
         })
       ]);
       const r = (rr && rr.r) ? rr.r : null;
@@ -302,9 +302,17 @@ function tkDatos(j, que) {
 // El plan gratuito de tikwm acepta ~1 petición por segundo: cuando avisa
 // del límite, un respiro y una segunda oportunidad.
 async function tkLlamada(que, hacer) {
+  // En apagón, solo los pedidos DIRECTOS de la persona (reproducir un
+  // video) pasan: se les hace caso.
+  if (apagado() && !/^resolve|^enlace/.test(que)) {
+    throw new Error("apagón: " + clip(que, 40) + " pospuesto");
+  }
   try {
-    return await hacer();
+    const v = await hacer();
+    anotarAcierto();
+    return v;
   } catch (e) {
+    anotarGolpe(String((e && e.apiMsg) || (e && e.message) || ""));
     const men = String((e && e.apiMsg) || (e && e.message) || "");
     if (/limit/i.test(men)) {
       await espera(1500);
@@ -788,6 +796,48 @@ function guardarFilaEnCache(idFila, items) {
   } catch (e) { }
 }
 
+// La semilla de fábrica: videos verdaderos de TikTok sembrados DENTRO del
+// plugin (25 de noviembre de 2026) para que Loop JAMÁS quede en blanco,
+// ni siquiera recién instalado con el servicio de malas. Se reproducen
+// por el mismo camino de siempre; los pósters son una foto del día de la
+// siembra (pueden envejecer, no pasa nada).
+const SEMILLA_ITEMS = [{"id":"tk.v.7706622473042709791","ref":"v:7706622473042709791","title":"My idea of fun, hangin with my gf getting the yummiest hot coco from @Scoops on Main and a quesadilla from @Qu","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn-us.com/tos-useast8-p-0068-tx2/oM9FTEfEGA8GqzwVEQBvRqADW7QYFKEXDof2bz~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=e6728d2a&x-expires=1795669200&x-signature=RqeeADj7K3pq4WnlfkQo0cGDSqY%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@jennabooher"},{"id":"tk.v.7703231469858147614","ref":"v:7703231469858147614","title":"it’s officially christmas in houston!! 🎄✨ #christmas #houston #texas #holidays #christmaslights","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn-us.com/tos-useast8-p-0068-tx2/o0IAeiiKEsmPb0cME1IyAVqni1ICIkjPB6YViA~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=54365d92&x-expires=1795669200&x-signature=%2Fukoq%2FQ1ufGAha6xqIH6dqm9zmQ%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@rodeomillie"},{"id":"tk.v.7709338322656627988","ref":"v:7709338322656627988","title":"🌪️ The sands have arrived! The Doomsday: Last Survivors × Dune: Part Three collaboration officially begins to","kind":"movie","runtimeMinutes":1,"originalTitle":"@doomsdaylastsurvivor"},{"id":"tk.v.7705827486902258976","ref":"v:7705827486902258976","title":"still with you #seoulvlog #koreavlog #seoulvibe #stillwithyou #seoul","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn-us.com/tos-useast2a-p-0037-euttp/o4QRjmqAJCfHA0KhDDIun8FPG1GBkQf8EME4Fq~tplv-tiktokx-origin.image?dr=8593&refresh_token=daa689e0&x-expires=1795669200&x-signature=oEtrCKEevYH2QT4XFLz8IkyXCZI%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover&item=7705827486902258976","originalTitle":"@the.byzt"},{"id":"tk.v.7706651937634061598","ref":"v:7706651937634061598","title":"karina at Disney World today 💙 #karina #aespa #yujimin","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn-us.com/tos-useast8-p-0068-tx2/o0y4SD8ZIAVsI4AE6EhEULcAxEDRAAFeqzCbbf~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=74fdf9d9&x-expires=1795669200&x-signature=k99alx667Ydgnij5IKL%2FNOrxKss%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&sc=cover&biz_tag=tt_video&s=FEED","originalTitle":"@ketaminjeong01"},{"id":"tk.v.7711637682782276887","ref":"v:7711637682782276887","title":"Meet Ibrahim, aged 12, from Hampshire; Lainey, aged 12, from the Scottish Highlands; Luna, aged eight, from Ke","kind":"movie","runtimeMinutes":1,"originalTitle":"@thebookerprizes"},{"id":"tk.v.7685500879855684877","ref":"v:7685500879855684877","title":"#outfitinspo #falloutfits #fallfashioninspo #fallseason #outfitideas","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn-us.com/tos-useast5-i-photomode-tx/1d2c6f2aeaae44d79ae53de7e357517e~tplv-photomode-image-cover:640:0:q70.webp?dr=12229&refresh_token=287a9b97&x-expires=1796878800&x-signature=aUYsfHn7P9aqMP7eC23LaZgViSw%3D&t=5897f7ec&ps=d5b8ac02&shp=d05b14bd&shcp=1a816805&idc=useast5&s=FEED&biz_tag=tt_photomode&sc=cover","originalTitle":"@a.vision.ary"},{"id":"tk.v.7692989748914294023","ref":"v:7692989748914294023","title":"\"what if i’m younger? i can take care of you better than anyone else\" #teeteepor #twnpich #porsuppakarn #duang","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn-us.com/tos-alisg-p-0037/o89rgDFrGA2ghcGwkIXueWTAL5fGCLNofwXeaR~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=a0aaac8e&x-expires=1795669200&x-signature=psTAB8XrMxGBfCYbLMAMN7yCbtM%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@pwettygzb"},{"id":"tk.v.7695265700255943937","ref":"v:7695265700255943937","title":"Bryan invita a Karla 😮 #bebes #memes","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn.com/tos-alisg-p-0037/o4dBsKqILnLDRBzEgmc3xfEkFEARzDythf82AI~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=8a31bed4&x-expires=1795669200&x-signature=LW9Prj%2Fyzh6FQUrm%2B9qBb8ONydU%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&s=FEED&sc=cover&bas=android_sc_bas_pb&biz_tag=tt_video","originalTitle":"@chalinoybryan"},{"id":"tk.v.7711180051663899905","ref":"v:7711180051663899905","title":"@𝑲𝒂𝒕𝒉𝒆 🐈‍⬛ 🙄","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn.com/tos-alisg-p-0037/ocW5QBqB1An2k7xii1BcUAIQCAoDfgcwBIIXor~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=9cfd27f6&x-expires=1795669200&x-signature=9GHyB04QyZLG61obYcJf%2FmpLquQ%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&biz_tag=tt_video&s=FEED&sc=cover&bas=android_sc_bas_pb","originalTitle":"@estebaanlopez"},{"id":"tk.v.7695240029358132511","ref":"v:7695240029358132511","title":"#BalliBotMagos #TredingReels #TredingReels #ForYouPage #FYP #FYP #ViralTikTok #MillionViews #TechMagic #SmartB","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn.com/tos-useast8-p-0068-tx2/osWIefuBIiURUFKFQVTGeQWGghALAtfAnU6rQy~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=a4ed5f38&x-expires=1795669200&x-signature=S5xHzsr2Fj9KVdD8eFJvaNCl9Og%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@usafunny596"},{"id":"tk.v.7702808841376910614","ref":"v:7702808841376910614","title":"DI QUE SI 🎵 #marcaregistrada #grupofrontera #lyrics #fyp #dedicar #amor #diquesi","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn.com/tos-no1a-p-0037-no/ocf0ADzDdqewEgET3JHFnCNDCYAk5IVl83kAAF~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=4306b0fc&x-expires=1795669200&x-signature=5Abh9%2F7SIQCYYXojjHkIdehA2S4%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@heyner_18v"}];
+
+function filaSemilla(idFila) {
+  return {
+    id: "fila.semilla." + (idFila || "defecto"),
+    title: "Tendencias de TikTok",
+    items: SEMILLA_ITEMS,
+    genre: "entretenimiento"
+  };
+}
+
+// ---------- el apagón y la ración ----------
+
+// Golpes seguidos = peticiones seguidas que no lograron nada: si se
+// acumulan, el servicio está de malas y el plugin DEJA DE PEDIR por
+// 5 minutos (sirve memoria de filas y la semilla), para no machacar un
+// servidor tímido. Reproducir un video pide de todos modos: la persona
+// mandó, se le hace caso.
+var golpesSeguidos = 0;
+var apagonHasta = 0;
+var ultimoFalloRed = "";
+var rotacionPortada = 0;
+function apagado() { return Date.now() < apagonHasta; }
+function anotarAcierto() {
+  golpesSeguidos = 0;
+  apagonHasta = 0;
+}
+function anotarGolpe(men) {
+  if (/^apagón/.test(String(men || ""))) return; // el apagón no se extiende a sí mismo
+  golpesSeguidos = golpesSeguidos + 1;
+  ultimoFalloRed = clip(String(men || ""), 90);
+  if (golpesSeguidos >= 6) {
+    apagonHasta = Date.now() + 300000;
+    try { kino.log("Loop: apagón de 5 minutos (golpes: " + golpesSeguidos + ", último: " + clip(ultimoFalloRed, 60) + ")"); } catch (e) { }
+  }
+}
+
 export async function home() {
   // La portada completa se recuerda 20 minutos: reabrir la app es
   // instantáneo y el plan gratuito de tikwm recibe menos peticiones.
@@ -808,6 +858,20 @@ export async function home() {
   } catch (e) { }
   const posters = {};
   const progreso = { ok: 0, detalle: [] };
+  // Ración: la fila de doramas siempre; MÁXIMO 2 regiones de red por
+  // apertura (rotando para que todas se refresquen con el tiempo); el
+  // resto sale de la memoria de fila. Así son ~3 peticiones por apertura,
+  // no 28: al plan gratuito de tikwm se le hace la vida fácil.
+  let cupos = 2;
+  const pedirAhora = { doramas: true };
+  for (let i = 0; i < REGIONES_PORTADA.length; i++) pedirAhora[REGIONES_PORTADA[i].id] = false;
+  rotacionPortada = (rotacionPortada + 1) % REGIONES_PORTADA.length;
+  for (let i = 0; i < REGIONES_PORTADA.length && cupos > 0; i++) {
+    const fq = REGIONES_PORTADA[(rotacionPortada + i) % REGIONES_PORTADA.length];
+    const enR = cacheFilas[fq.id];
+    const fresco = enR && Array.isArray(enR.items) && enR.items.length > 0 && enR.t && (Date.now() - enR.t) < 2700000;
+    if (!fresco) { pedirAhora[fq.id] = true; cupos--; }
+  }
   // Las filas se piden A LA VEZ, con un escalonado de un segundo entre una
   // y otra (el plan gratuito de tikwm acepta más o menos una petición por
   // segundo: pedidas casi juntas las negaba TODAS con "Free Api Limit"):
@@ -823,6 +887,7 @@ export async function home() {
     try {
       const enCache = cacheFilas[f.id];
       if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0 && enCache.t && (Date.now() - enCache.t) < 2700000) return { f: f, items: enCache.items };
+      if (!pedirAhora[f.id]) return { f: f, items: (enCache && Array.isArray(enCache.items)) ? enCache.items : [] };
     } catch (eC) { }
     try {
       let d = await tkLlamada("fila doramas", function () {
@@ -864,6 +929,7 @@ export async function home() {
       try {
         const enCache = cacheFilas[f.id];
         if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0 && enCache.t && (Date.now() - enCache.t) < 2700000) return { f: f, items: enCache.items };
+        if (!pedirAhora[f.id]) return { f: f, items: (enCache && Array.isArray(enCache.items)) ? enCache.items : [] };
       } catch (eC) { }
       try {
         const d = await tkLlamada("portada " + f.region, function () {
@@ -971,9 +1037,13 @@ export async function home() {
     }
   }
   if (salida.length === 0) {
-    throw kino.error("unavailable", "portada vacía (" + clip(trazaPortada, 60) + ")", {
-      userMessage: "TikTok no responde ahora mismo. Espera un momento y vuelve a abrir la portada."
-    });
+    // Semilla de fábrica: el Inicio JAMÁS se queda en blanco, ni siquiera
+    // recién instalado con el servicio de malas.
+    const sem = filaSemilla("emergencia");
+    guardarLista("h:semilla", sem.items);
+    salida.push(sem);
+    kino.log("Loop portada: SEMILLA de fábrica (" + sem.items.length + " videos)");
+    trazaPortada = "SEMILLA";
   }
   const filaFavs = { id: "fila.favoritos", title: "Mis creadores", items: favoritosCanales(), genre: "otros" };
   if (filaFavs.items.length > 0) {
@@ -1280,6 +1350,11 @@ export async function section(arg) {
       trazaSeccion = "EMERGENCIA " + trazaSeccion;
       kino.log("Loop sección: " + trazaSeccion);
       return salEmer;
+    } else if (filasConVideos === 0) {
+      // Sin videos y sin memoria: la semilla de fábrica da siempre algo
+      // que ver (los canales del gusto cierran la pestaña).
+      rows.push(filaSemilla(tab.id));
+      trazaSeccion = "SEMILLA " + trazaSeccion;
     }
   }
   kino.log("Loop sección: " + trazaSeccion);
@@ -1868,6 +1943,7 @@ function informeDebug() {
   lineas.push("Videos recordados: " + Object.keys(vistos).length + " (para enlaces y canales)");
   lineas.push("Continuar viendo (videos reproducidos): " + continuar.length);
   lineas.push("Listas en memoria: " + Object.keys(cacheListas).length + " (filas, búsquedas, perfiles)");
+  lineas.push("Red: " + (apagado() ? "EN APAGÓN hasta " + new Date(apagonHasta).toISOString().slice(11, 19) : "normal") + ", golpes seguidos: " + golpesSeguidos + ", último fallo: " + (ultimoFalloRed || "ninguno"));
   const items = [];
   for (let i = 0; i < lineas.length; i++) {
     let resto = lineas[i];
