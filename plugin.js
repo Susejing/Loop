@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.4.5";
+const VERSION = "0.4.6";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -90,6 +90,11 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // nuevo); la portada completa se recuerda 20 minutos.
 const VERIF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PORTADA_CACHE_MS = 20 * 60 * 1000;
+
+// El espejo de tikwm: si el dominio principal no responde (colgado, lento
+// o bloqueando), la misma petición sale por el espejo tikwm.org.
+const BASE_PRINCIPAL = "https://tikwm.com/api/";
+const BASE_ESPEJO = "https://tikwm.org/api/";
 
 // ---------- diagnóstico (se ve con "debug" en el buscador) ----------
 
@@ -209,58 +214,70 @@ function protegerIds(texto) {
 
 async function pedirJson(url, timeoutMs, extra) {
   let ultimoError = null;
-  for (let intento = 0; intento < 2; intento++) {
-    const cabeceras = { "Accept": "application/json", "User-Agent": UA };
-    if (extra && extra["User-Agent"]) cabeceras["User-Agent"] = extra["User-Agent"];
-    if (extra && extra["Cookie"]) cabeceras["Cookie"] = extra["Cookie"];
-    const r = await kino.fetch(url, {
-      method: "GET",
-      headers: cabeceras,
-      timeoutMs: timeoutMs || 15000
-    }).catch(function (e) {
-      ultimoError = e;
-      return null;
-    });
-    if (!r) {
-      await espera(900);
-      continue;
-    }
-    if (!r.ok) {
-      let cuerpo = "";
-      try { cuerpo = await r.text(); } catch (e2) { cuerpo = ""; }
-      const e = new Error("http " + r.status + (cuerpo ? " " + clip(cuerpo, 90) : ""));
-      e.status = r.status;
-      // 429, 5xx y los avisos de verificación valen un reintento.
-      if ((r.status === 429 || r.status >= 500 || /verification|just a moment/i.test(cuerpo)) && intento === 0) {
-        ultimoError = e;
-        await espera(1100);
-        continue;
+  // Dos destinos: el dominio principal y, si se rinde, el espejo de tikwm.
+  const urls = [url];
+  if (url.indexOf(BASE_PRINCIPAL) === 0) urls.push(BASE_ESPEJO + url.slice(BASE_PRINCIPAL.length));
+  for (let u = 0; u < urls.length; u++) {
+    for (let intento = 0; intento < 2; intento++) {
+      const cabeceras = { "Accept": "application/json", "User-Agent": UA };
+      if (extra && extra["User-Agent"]) cabeceras["User-Agent"] = extra["User-Agent"];
+      if (extra && extra["Cookie"]) cabeceras["Cookie"] = extra["Cookie"];
+      // Tope duro PROPIO: si la petición queda colgada sin responder, se
+      // abandona aquí y se sigue con el reintento o el espejo (una
+      // promesa colgada se comía pantallas enteras: "esperaba a tikwm.com").
+      const rr = await Promise.race([
+        kino.fetch(urls[u], {
+          method: "GET",
+          headers: cabeceras,
+          timeoutMs: timeoutMs || 15000
+        }).then(function (v) { return { r: v }; }, function (e) { ultimoError = e; return { e: e }; }),
+        espera((timeoutMs || 15000) + 500).then(function () {
+          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : "el espejo tikwm.org")) };
+        })
+      ]);
+      const r = (rr && rr.r) ? rr.r : null;
+      if (!r) {
+        ultimoError = (rr && rr.e) ? rr.e : ultimoError;
+        if (intento === 0) { await espera(900); continue; }
+        break; // este destino se rinde: el espejo toma la mano
       }
-      throw e;
-    }
-    let cuerpo = "";
-    try {
-      cuerpo = await r.text();
-    } catch (e2) {
-      ultimoError = e2;
-      if (intento === 0) { await espera(900); continue; }
-      throw e2;
-    }
-    const t = cuerpo.trim();
-    if (t.charAt(0) !== "{" && t.charAt(0) !== "[") {
-      // Cloudflare u otra página HTML en lugar del JSON.
-      const e = new Error("respuesta no JSON" + (t ? ": " + clip(t, 70) : " (vacía)"));
-      e.noJson = true;
-      ultimoError = e;
-      if (intento === 0) { await espera(1100); continue; }
-      throw e;
-    }
-    try {
-      return JSON.parse(protegerIds(t));
-    } catch (e3) {
-      ultimoError = new Error("JSON ilegible: " + clip(t, 70));
-      if (intento === 0) { await espera(900); continue; }
-      throw ultimoError;
+      if (!r.ok) {
+        let cuerpo = "";
+        try { cuerpo = await r.text(); } catch (e2) { cuerpo = ""; }
+        const e = new Error("http " + r.status + (cuerpo ? " " + clip(cuerpo, 90) : ""));
+        e.status = r.status;
+        // 429, 5xx y los avisos de verificación valen un reintento.
+        if ((r.status === 429 || r.status >= 500 || /verification|just a moment/i.test(cuerpo)) && intento === 0) {
+          ultimoError = e;
+          await espera(1100);
+          continue;
+        }
+        throw e;
+      }
+      let cuerpo = "";
+      try {
+        cuerpo = await r.text();
+      } catch (e2) {
+        ultimoError = e2;
+        if (intento === 0) { await espera(900); continue; }
+        throw e2;
+      }
+      const t = cuerpo.trim();
+      if (t.charAt(0) !== "{" && t.charAt(0) !== "[") {
+        // Cloudflare u otra página HTML en lugar del JSON.
+        const e = new Error("respuesta no JSON" + (t ? ": " + clip(t, 70) : " (vacía)"));
+        e.noJson = true;
+        ultimoError = e;
+        if (intento === 0) { await espera(1100); continue; }
+        throw e;
+      }
+      try {
+        return JSON.parse(protegerIds(t));
+      } catch (e3) {
+        ultimoError = new Error("JSON ilegible: " + clip(t, 70));
+        if (intento === 0) { await espera(900); continue; }
+        throw ultimoError;
+      }
     }
   }
   throw ultimoError || new Error("sin respuesta");
@@ -743,6 +760,19 @@ const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
 // Un renglón de la portada al almacén, compacto (8 videos con lo mínimo,
 // kind incluido para que el canal siga funcionando): la próxima apertura
 // arranca con lo ya traído aunque el reloj corra.
+// Una fila guardada de antes, para la emergencia (tikwm sin responder).
+function filaDeRespaldo(idFila, items) {
+  let titulo = "Videos guardados";
+  let ref = "";
+  if (idFila === "doramas") { titulo = DORAMAS_FILA.titulo; ref = DORAMAS_FILA.ref; }
+  for (let i = 0; i < REGIONES_PORTADA.length; i++) {
+    if (REGIONES_PORTADA[i].id === idFila) { titulo = REGIONES_PORTADA[i].titulo; ref = "r:" + REGIONES_PORTADA[i].region; }
+  }
+  const fila = { id: "fila." + idFila, title: titulo, items: items, genre: idFila === "doramas" ? "series" : "entretenimiento" };
+  if (ref) fila.ref = ref;
+  return fila;
+}
+
 function guardarFilaEnCache(idFila, items) {
   try {
     const compacto = [];
@@ -754,7 +784,7 @@ function guardarFilaEnCache(idFila, items) {
     if (compacto.length === 0) return;
     const cf = getJson("portada_filas", {}) || {};
     cf[idFila] = { t: Date.now(), items: compacto };
-    setJson("portada_filas", cf, 3600000);
+    setJson("portada_filas", cf, 21600000);
   } catch (e) { }
 }
 
@@ -926,8 +956,23 @@ export async function home() {
     });
   }
   if (salida.length === 0) {
-    throw kino.error("unavailable", "portada vacía (" + trazaPortada + ")", {
-      userMessage: "TikTok no respondió ahora mismo. Espera un momento y vuelve a abrir la portada."
+    // Memoria de emergencia: aunque las filas guardadas estén pasadas de
+    // hora, algo guardado es mejor que el error vacío.
+    const ordenRespaldo = ["doramas", "co", "mx", "us", "es", "ar", "br"];
+    for (let i = 0; i < ordenRespaldo.length; i++) {
+      const enCache = cacheFilas[ordenRespaldo[i]];
+      if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0) {
+        salida.push(filaDeRespaldo(ordenRespaldo[i], enCache.items));
+      }
+    }
+    if (salida.length > 0) {
+      kino.log("Loop portada: memoria de emergencia (" + salida.length + " filas)");
+      trazaPortada = "EMERGENCIA " + trazaPortada;
+    }
+  }
+  if (salida.length === 0) {
+    throw kino.error("unavailable", "portada vacía (" + clip(trazaPortada, 60) + ")", {
+      userMessage: "TikTok no responde ahora mismo. Espera un momento y vuelve a abrir la portada."
     });
   }
   const filaFavs = { id: "fila.favoritos", title: "Mis creadores", items: favoritosCanales(), genre: "otros" };
@@ -1076,6 +1121,16 @@ export async function section(arg) {
   }
   const rows = [];
   let hero = null;
+  // Memoria de la pestaña (1 hora): si hace poco se armó aquí, no se
+  // pide otra vez (el plan gratuito de tikwm lo agradece).
+  const claveSecCache = "sec_" + tab.id;
+  const secCache = tab.favoritos ? null : getJson(claveSecCache, null);
+  if (secCache && secCache.rows && secCache.rows.length > 1 && secCache.t && (Date.now() - secCache.t) < 3600000) {
+    try { kino.log("Loop sección: memoria (" + tab.label + ")"); } catch (eC) { }
+    const salMem = { tabs: tabs, tab: tab.id, rows: secCache.rows };
+    if (secCache.hero) salMem.hero = secCache.hero;
+    return salMem;
+  }
   // «Continuar viendo»: lo último que se miró, en todas las pestañas.
   const cont = filaContinuar();
   if (cont.length >= 2) {
@@ -1110,7 +1165,26 @@ export async function section(arg) {
         }
       })(REGIONES_CATEGORIAS[i], i * 1100));
     }
-    const filas = await Promise.all(pedidas);
+    // Tope de 16 s: con lo que llegó se arma la pestaña; lo que faltó
+    // queda para la próxima apertura (la memoria por pestaña lo completa).
+    const resultadosSec = [];
+    for (let i = 0; i < pedidas.length; i++) {
+      resultadosSec.push(null);
+      pedidas[i] = pedidas[i].then(function (r) { resultadosSec[i] = r; return r; });
+    }
+    let filas = null;
+    try {
+      filas = await Promise.race([
+        Promise.all(pedidas),
+        espera(16000).then(function () { return null; })
+      ]);
+    } catch (eSecCorte) {
+      filas = null;
+    }
+    if (filas === null) {
+      filas = [];
+      for (let i = 0; i < resultadosSec.length; i++) if (resultadosSec[i]) filas.push(resultadosSec[i]);
+    }
     for (let i = 0; i < filas.length; i++) {
       const r = filas[i];
       if (r.items.length > 0) {
@@ -1144,7 +1218,19 @@ export async function section(arg) {
     // Las filas del gusto, sin repetir videos entre ellas; las «Más X»
     // (segunda página del mismo tema) solo salen si traen al menos tres
     // videos NUEVOS — si tikwm no paginó, la fila se omite sin ruido.
-    const filas = await filasDeSeccionTemas(tab, tab.filas);
+    let filas = null;
+    try {
+      filas = await Promise.race([
+        filasDeSeccionTemas(tab, tab.filas),
+        espera(16000).then(function () { return null; })
+      ]);
+    } catch (eTemCorte) {
+      filas = null;
+    }
+    if (filas === null) {
+      filas = [];
+      for (let i = 0; i < tab.filas.length; i++) filas.push({ fila: tab.filas[i], items: [] });
+    }
     const ids = {};
     for (let i = 0; i < filas.length; i++) {
       const fila = filas[i].fila;
@@ -1182,6 +1268,19 @@ export async function section(arg) {
       rows.push({ id: "sec." + tab.id + ".canales", title: "Canales de este gusto", items: canales, genre: "otros" });
     }
     trazaSeccion = tab.label + ": " + rows.length + " filas (temas y canales)";
+  }
+  if (!tab.favoritos) {
+    const filasConVideos = rows.length - (cont.length >= 2 ? 1 : 0) - 1;
+    if (filasConVideos >= 2) {
+      setJson(claveSecCache, { t: Date.now(), rows: rows, hero: hero }, 3600000);
+    } else if (filasConVideos === 0 && secCache && secCache.rows && secCache.rows.length > 1) {
+      try { kino.log("Loop sección: memoria de emergencia (" + clip(tab.label, 30) + ")"); } catch (eEmer) { }
+      const salEmer = { tabs: tabs, tab: tab.id, rows: secCache.rows };
+      if (secCache.hero) salEmer.hero = secCache.hero;
+      trazaSeccion = "EMERGENCIA " + trazaSeccion;
+      kino.log("Loop sección: " + trazaSeccion);
+      return salEmer;
+    }
   }
   kino.log("Loop sección: " + trazaSeccion);
   const salida = { tabs: tabs, tab: tab.id, rows: rows };
