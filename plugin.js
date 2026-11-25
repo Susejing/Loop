@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.4.4";
+const VERSION = "0.4.5";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -395,6 +395,44 @@ try {
   if (Array.isArray(continuarGuardada)) continuar = continuarGuardada;
 } catch (e) { }
 
+// Los @creadores favoritos: se guardan buscando «guardar @usuario» y se
+// quitan con «quitar @usuario» (o revisándolos con «favoritos»). Salen
+// como fila propia en el Inicio y como pestaña «Mis creadores».
+var favoritos = [];
+try {
+  const favGuardados = getJson("favoritos", null);
+  if (Array.isArray(favGuardados)) favoritos = favGuardados;
+} catch (e) { }
+function favoritosGuardar(uid) {
+  uid = String(uid || "").trim();
+  if (!uid) return;
+  favoritos = favoritos.filter(function (f) { return f.uid !== uid; });
+  favoritos.unshift({ uid: uid, t: Date.now() });
+  if (favoritos.length > 24) favoritos = favoritos.slice(0, 24);
+  setJson("favoritos", favoritos, 0);
+}
+function favoritosQuitar(uid) {
+  uid = String(uid || "").trim();
+  const antes = favoritos.length;
+  favoritos = favoritos.filter(function (f) { return f.uid !== uid; });
+  if (favoritos.length !== antes) setJson("favoritos", favoritos, 0);
+  return favoritos.length !== antes;
+}
+function serieDeFavorito(uid) {
+  return {
+    id: "tk.u." + uid,
+    ref: "u:" + uid,
+    title: "@" + uid,
+    kind: "series",
+    overview: "Canal de este creador: sus últimos videos, uno tras otro."
+  };
+}
+function favoritosCanales() {
+  const canales = [];
+  for (let i = 0; i < favoritos.length; i++) canales.push(serieDeFavorito(favoritos[i].uid));
+  return canales;
+}
+
 // Lo que se sabe de cada video (quién lo subió, su título): al reproducir
 // hay que armar el enlace canónico de TikTok, que lleva el @usuario.
 var vistos = {};
@@ -673,7 +711,14 @@ const TEMAS = [
   { titulo: "Fútbol", tag: "#futbol", genero: ["Deportes", "Fútbol"] },
   { titulo: "Videojuegos", tag: "#gaming", genero: ["Videojuegos"] },
   { titulo: "Recetas", tag: "#recetas", genero: ["Cocina"] },
-  { titulo: "Humor", tag: "#humor", genero: ["Humor"] }
+  { titulo: "Humor", tag: "#humor", genero: ["Humor"] },
+  { titulo: "Comida", tag: "#comida", genero: ["Comida"] },
+  { titulo: "Cocina", tag: "#cocina", genero: ["Cocina"] },
+  { titulo: "Viajes", tag: "#viajes", genero: ["Viajes"] },
+  { titulo: "Turismo", tag: "#turismo", genero: ["Viajes"] },
+  { titulo: "Deportes", tag: "#deportes", genero: ["Deportes"] },
+  { titulo: "Boxeo", tag: "#boxeo", genero: ["Deportes"] },
+  { titulo: "Mascotas", tag: "#mascotas", genero: ["Mascotas"] }
 ];
 
 // El contexto de un tema (sus géneros y si es de español) para los videos
@@ -885,6 +930,11 @@ export async function home() {
       userMessage: "TikTok no respondió ahora mismo. Espera un momento y vuelve a abrir la portada."
     });
   }
+  const filaFavs = { id: "fila.favoritos", title: "Mis creadores", items: favoritosCanales(), genre: "otros" };
+  if (filaFavs.items.length > 0) {
+    if (salida.length > 1) salida.splice(1, 0, filaFavs);
+    else salida.push(filaFavs);
+  }
   try { setJson("portada_cache", { t: Date.now(), rows: salida }, PORTADA_CACHE_MS); } catch (e) { }
   return salida;
 }
@@ -923,6 +973,23 @@ const SECCION_TABS = [
     { tag: "#recetas" },
     { tag: "#humor", cursor: "18", titulo: "Más humor" }
   ] },
+  { id: "comida", label: "Comida", filas: [
+    { tag: "#comida" },
+    { tag: "#cocina" },
+    { tag: "#comida", cursor: "18", titulo: "Más comida" }
+  ] },
+  { id: "viajes", label: "Viajes", filas: [
+    { tag: "#viajes" },
+    { tag: "#turismo" },
+    { tag: "#viajes", cursor: "18", titulo: "Más viajes" }
+  ] },
+  { id: "deportes", label: "Deportes", filas: [
+    { tag: "#deportes" },
+    { tag: "#futbol" },
+    { tag: "#boxeo" },
+    { tag: "#deportes", cursor: "18", titulo: "Más deportes" }
+  ] },
+  { id: "favoritos", label: "Mis creadores", favoritos: true },
   { id: "paises", label: "Países", regiones: true }
 ];
 
@@ -1014,7 +1081,21 @@ export async function section(arg) {
   if (cont.length >= 2) {
     rows.push({ id: "sec.continuar", title: "Continuar viendo", items: cont, genre: "otros" });
   }
-  if (tab.regiones) {
+  if (tab.favoritos) {
+    // «Mis creadores»: los @usuarios guardados (sin peticiones a la red).
+    const favs = favoritosCanales();
+    if (favs.length > 0) {
+      rows.push({ id: "sec.favoritos.canales", title: "Mis creadores", items: favs, genre: "otros" });
+    } else {
+      rows.push({
+        id: "sec.favoritos.como",
+        title: "Sin creadores guardados",
+        items: [{ id: "tk.info.favoritos", ref: "v:debugfavoritos", title: "Para guardar uno: busca «guardar @usuario». Para quitarlo: «quitar @usuario».", kind: "movie" }],
+        genre: "otros"
+      });
+    }
+    trazaSeccion = "Mis creadores: " + favs.length + " canales";
+  } else if (tab.regiones) {
     // «Países»: las tendencias de las OCHO regiones, el camino sin
     // verificación.
     const pedidas = [];
@@ -1211,6 +1292,33 @@ export async function search(query) {
 
   const qLower = q.toLowerCase();
   if (qLower === "debug" || qLower === "estado") return informeDebug();
+
+  // Creadores favoritos: «guardar @usuario», «quitar @usuario» o «favoritos».
+  const mGuardar = qLower.match(/^guardar\s+@?([a-z0-9._]{1,30})$/);
+  if (mGuardar) {
+    favoritosGuardar(mGuardar[1]);
+    return avisoDebug(
+      "✔ @" + mGuardar[1] + " guardado en Mis creadores. Saldrá como fila en el Inicio y en la pestaña «Mis creadores».",
+      favoritos.length + " creador(es) en total. Para quitarlo: busca «quitar @" + mGuardar[1] + "»."
+    );
+  }
+  const mQuitar = qLower.match(/^quitar\s+@?([a-z0-9._]{1,30})$/);
+  if (mQuitar) {
+    const salio = favoritosQuitar(mQuitar[1]);
+    const lista = favoritos.length ? favoritos.map(function (f) { return "@" + f.uid; }).join(", ") : "(ninguno aún)";
+    return avisoDebug(
+      salio ? ("✔ @" + mQuitar[1] + " quitado de Mis creadores.") : ("@" + mQuitar[1] + " no estaba en Mis creadores."),
+      "Tus creadores: " + lista
+    );
+  }
+  if (qLower === "favoritos" || qLower === "mis creadores") {
+    const canales = favoritosCanales();
+    if (canales.length > 0) return canales;
+    return avisoDebug(
+      "Todavía no tienes creadores guardados.",
+      "Entra al perfil (@usuario) para verlo bien, y luego busca «guardar @usuario» con el nombre del creador."
+    );
+  }
 
   // Página siguiente de la misma búsqueda.
   if (cursor) {
@@ -1629,6 +1737,18 @@ export async function action(key) {
     });
   }
   return null;
+}
+
+// Mensajes informativos como resultados de búsqueda (no se reproducen):
+// el mismo truco del informe técnico, para respuestas cortas.
+function avisoDebug(linea1, linea2) {
+  const lineas = [String(linea1 || "")];
+  if (linea2) lineas.push(String(linea2));
+  const items = [];
+  for (let i = 0; i < lineas.length; i++) {
+    items.push({ id: "tk.info." + Date.now() + "." + i, ref: "v:debuginfo." + i, title: clip(lineas[i], 110), kind: "movie" });
+  }
+  return items;
 }
 
 // El informe técnico como resultados de búsqueda: cada línea es un
