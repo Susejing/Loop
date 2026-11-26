@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.4.9";
+const VERSION = "0.5.0";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -104,6 +104,11 @@ const BASE_ESPEJO = "https://www.tikwm.com/api/"; // el subdominio www ya está 
 // pudimos probar desde el banco de pruebas, así que si falla, falla callado
 // (se ve en el informe de "debug" en la línea «Respaldo»): no rompe nada.
 const BASE_TERCERO = "https://douyin.wtf/api/hybrid/video_data?url=";
+// PAUSA DEL RESPALDO: pedir hosts nuevos dejó al plugin sin piernas en el
+// teléfono mientras Kino no los apruebe (y jamás pidió aprobarlos). Hasta
+// aclarar eso, el respaldo queda dormido y solo trabajan tikwm y su espejo,
+// que ya están aprobados desde antes.
+const RESPALDO_ACTIVO = false;
 const TOPE_TERCERO_MS = 12000;
 let trazaRespaldo = "(sin usar aún)";
 
@@ -1879,6 +1884,7 @@ export async function resolve(ref, opciones) {
     // distinto). Solo se armó para reproducción: si tikwm y su espejo
     // rinden, aquí está la última mano antes de rendirse con el video.
     try {
+      if (!RESPALDO_ACTIVO) throw new Error("respaldo pausado (experimento dormido)");
       const t = await tkLlamada("resolve respaldo", function () { return porRespaldo(candidatos[0]); });
       if (t && (t.play || t.wmplay)) { d = t; viaRespaldo = true; trazaRespaldo = "FUNCIONÓ (video " + clip(s, 12) + ")"; }
     } catch (eT) {
