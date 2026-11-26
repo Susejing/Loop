@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.5.1";
+const VERSION = "0.5.2";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -400,17 +400,23 @@ async function tkLlamada(que, hacer) {
   }
 }
 
+// Desde la 0.5.2 la galleta viaja TAMBIÉN aquí (reproducir): si a tikwm le
+// salió un portero (Cloudflare) para la IP del teléfono, la galleta y el
+// disfraz del navegador son la llave — el portero no pregunta el destino,
+// pregunta en TODAS las puertas.
 async function tkPorEnlace(enlace) {
-  return tkDatos(await pedirJson(BASE + "?url=" + encodeURIComponent(enlace)), "video por enlace");
+  return tkDatos(await pedirJson(BASE + "?url=" + encodeURIComponent(enlace),
+    15000, cabecerasVerificadas()), "video por enlace");
 }
 
-// Tendencias de un país: el camino SIN verificación (por eso es la portada).
+// Tendencias de un país: antes el camino SIN verificación; desde la 0.5.2
+// la galleta viaja también aquí (misma razón que en reproducir).
 async function tkTendencias(region, cursor, cantidad, timeoutMs) {
   return tkDatos(
     await pedirJson(BASE + "feed/list?count=" + cantidad +
       "&region=" + encodeURIComponent(region) +
       "&cursor=" + encodeURIComponent(cursor || "0"),
-      timeoutMs || 15000),
+      timeoutMs || 15000, cabecerasVerificadas()),
     "tendencias " + region
   );
 }
