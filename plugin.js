@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.4.7";
+const VERSION = "0.4.8";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -95,6 +95,79 @@ const PORTADA_CACHE_MS = 20 * 60 * 1000;
 // o bloqueando), la misma petición sale por el espejo tikwm.org.
 const BASE_PRINCIPAL = "https://tikwm.com/api/";
 const BASE_ESPEJO = "https://www.tikwm.com/api/"; // el subdominio www ya está aprobado como host
+
+// ---------- el respaldo experimental (otro servicio, no tikwm) ----------
+// douyin.wtf es un servicio público DISTINTO: si tikwm se rinde en sus dos
+// rutas, jugar un video todavía tiene esta última red. SOLO se usa para
+// REPRODUCIR un video pedido por la persona (portada, canales y memoria
+// siguen en tikwm + semilla + memoria de fila). Es experimental: nunca lo
+// pudimos probar desde el banco de pruebas, así que si falla, falla callado
+// (se ve en el informe de "debug" en la línea «Respaldo»): no rompe nada.
+const BASE_TERCERO = "https://douyin.wtf/api/hybrid/video_data?url=";
+const TOPE_TERCERO_MS = 12000;
+let trazaRespaldo = "(sin usar aún)";
+
+async function pedidoTercero(url) {
+  const rr = await Promise.race([
+    kino.fetch(url, { method: "GET", headers: { "Accept": "application/json", "User-Agent": UA }, timeoutMs: TOPE_TERCERO_MS }),
+    espera(TOPE_TERCERO_MS + 500).then(function () { throw new Error("el respaldo douyin.wtf no respondió a tiempo"); })
+  ]);
+  if (!rr || !rr.ok) throw new Error("respaldo http " + (rr ? rr.status : "sin respuesta"));
+  let cuerpo = "";
+  try { cuerpo = await rr.text(); } catch (e) { throw new Error("respaldo: respuesta ilegible"); }
+  const t = String(cuerpo || "").trim();
+  if (t.charAt(0) !== "{") throw new Error("respaldo: respuesta no JSON");
+  try { return JSON.parse(t); } catch (e) { throw new Error("respaldo: JSON roto"); }
+}
+
+// Busca en CUALQUIER JSON el enlace del MP4 y los datos del video, sin
+// presuponer la forma de la respuesta: camina el árbol entero y recoge
+// play_addr / download_addr y compañía donde los encuentre.
+function datosDeArbol(j) {
+  const enlaces = [];
+  let titulo = "", autor = "", portada = "", minutos = 0;
+  (function rec(n, prof) {
+    if (!n || typeof n !== "object" || prof > 9) return;
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) rec(n[i], prof + 1); return; }
+    if (!titulo && typeof n.desc === "string" && n.desc) titulo = n.desc;
+    if (!titulo && typeof n.title === "string" && n.title) titulo = n.title;
+    if (!minutos && typeof n.duration === "number" && n.duration > 0) minutos = Math.max(1, Math.round((n.duration > 3600 ? n.duration / 1000 : n.duration) / 60));
+    if (!autor && n.author && typeof n.author === "object") {
+      autor = String(n.author.unique_id || n.author.uniqueId || n.author.nickname || "");
+    }
+    const v = n.video;
+    if (v && !Array.isArray(v) && typeof v === "object") {
+      const direcciones = [v.play_addr, v.download_addr, v.play_addr_bytevc1, v.play_addr_h264,
+        (Array.isArray(v.bit_rate) && v.bit_rate[0] && typeof v.bit_rate[0] === "object") ? v.bit_rate[0].play_addr : null];
+      for (let i = 0; i < direcciones.length; i++) {
+        const dir = direcciones[i];
+        if (dir && typeof dir === "object" && Array.isArray(dir.url_list)) {
+          for (let k = 0; k < dir.url_list.length; k++) {
+            if (typeof dir.url_list[k] === "string" && dir.url_list[k].indexOf("http") === 0) enlaces.push(dir.url_list[k]);
+          }
+        }
+      }
+      const c = v.cover || v.origin_cover || v.dynamic_cover;
+      if (!portada && c && typeof c === "object" && Array.isArray(c.url_list) && typeof c.url_list[0] === "string") portada = c.url_list[0];
+    }
+    const claves = Object.keys(n);
+    for (let i = 0; i < claves.length; i++) rec(n[claves[i]], prof + 1);
+  })(j, 0);
+  if (enlaces.length === 0) return null;
+  let enlace = enlaces[0];
+  for (let i = 0; i < enlaces.length; i++) if (/\.mp4/.test(enlaces[i])) { enlace = enlaces[i]; break; }
+  return {
+    play: enlace, wmplay: "", cover: portada, minutos: minutos,
+    title: titulo || "Video de TikTok", author: { unique_id: autor }
+  };
+}
+
+async function porRespaldo(enlace) {
+  const j = await pedidoTercero(BASE_TERCERO + encodeURIComponent(enlace));
+  const d = datosDeArbol(j);
+  if (!d || !d.play || d.play.indexOf("http") !== 0) throw new Error("respaldo: no encontró el enlace del video");
+  return d;
+}
 
 // ---------- diagnóstico (se ve con "debug" en el buscador) ----------
 
@@ -1777,6 +1850,7 @@ export async function resolve(ref, opciones) {
     "https://m.tiktok.com/v/" + s + ".html"
   ];
   let d = null;
+  let viaRespaldo = false;
   let ultimoError = null;
   for (let i = 0; i < candidatos.length; i++) {
     try {
@@ -1787,6 +1861,17 @@ export async function resolve(ref, opciones) {
       }
     } catch (e) {
       ultimoError = e;
+    }
+  }
+  if (!d) {
+    // ÚLTIMA RED: el respaldo experimental (douyin.wtf, un servicio
+    // distinto). Solo se armó para reproducción: si tikwm y su espejo
+    // rinden, aquí está la última mano antes de rendirse con el video.
+    try {
+      const t = await tkLlamada("resolve respaldo", function () { return porRespaldo(candidatos[0]); });
+      if (t && (t.play || t.wmplay)) { d = t; viaRespaldo = true; trazaRespaldo = "FUNCIONÓ (video " + clip(s, 12) + ")"; }
+    } catch (eT) {
+      trazaRespaldo = clip(String((eT && eT.message) || "fallo"), 90);
     }
   }
   if (!d) {
@@ -1819,7 +1904,7 @@ export async function resolve(ref, opciones) {
   }
   const stream = { url: url, mime: "video/mp4" };
   stream.label = (url === sinMarca && sinMarca && !conMarca) ? "TikTok sin marca de agua" : "TikTok";
-  trazaResolve = "tikwm: " + stream.label + " (" + clip(String(d.title || ""), 40) + ")";
+  trazaResolve = (viaRespaldo ? "respaldo: " : "tikwm: ") + stream.label + " (" + clip(String(d.title || ""), 40) + ")";
   ultimoResolve = { label: stream.label, titulo: clip(String(d.title || ""), 60) };
   return stream;
 }
@@ -1944,6 +2029,7 @@ function informeDebug() {
   lineas.push("Continuar viendo (videos reproducidos): " + continuar.length);
   lineas.push("Listas en memoria: " + Object.keys(cacheListas).length + " (filas, búsquedas, perfiles)");
   lineas.push("Red: " + (apagado() ? "EN APAGÓN hasta " + new Date(apagonHasta).toISOString().slice(11, 19) : "normal") + ", golpes seguidos: " + golpesSeguidos + ", último fallo: " + (ultimoFalloRed || "ninguno"));
+  lineas.push("Respaldo experimental (douyin.wtf): " + trazaRespaldo);
   const items = [];
   for (let i = 0; i < lineas.length; i++) {
     let resto = lineas[i];
