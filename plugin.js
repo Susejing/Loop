@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.5.3";
+const VERSION = "0.5.4";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -395,7 +395,7 @@ function tkDatos(j, que) {
 async function tkLlamada(que, hacer) {
   // En apagón, solo los pedidos DIRECTOS de la persona (reproducir un
   // video) pasan: se les hace caso.
-  if (apagado() && !/^resolve|^enlace/.test(que)) {
+  if (apagado() && !/^resolve|^enlace|^búsqueda|^busqueda|^search/i.test(que)) {
     throw new Error("apagón: " + clip(que, 40) + " pospuesto");
   }
   try {
