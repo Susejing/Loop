@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -94,7 +94,7 @@ const PORTADA_CACHE_MS = 20 * 60 * 1000;
 // El espejo de tikwm: si el dominio principal no responde (colgado, lento
 // o bloqueando), la misma petición sale por el espejo tikwm.org.
 const BASE_PRINCIPAL = "https://tikwm.com/api/";
-const BASE_ESPEJO = "https://www.tikwm.com/api/"; // el subdominio www ya está aprobado como host
+const BASE_ESPEJO = "https://tikwm.org/api/"; // host ya aprobado en el teléfono: SI tikwm.com le cierra la puerta a su IP, el espejo puede tenerla abierta
 
 // ---------- el respaldo experimental (otro servicio, no tikwm) ----------
 // douyin.wtf es un servicio público DISTINTO: si tikwm se rinde en sus dos
@@ -104,11 +104,11 @@ const BASE_ESPEJO = "https://www.tikwm.com/api/"; // el subdominio www ya está 
 // pudimos probar desde el banco de pruebas, así que si falla, falla callado
 // (se ve en el informe de "debug" en la línea «Respaldo»): no rompe nada.
 const BASE_TERCERO = "https://douyin.wtf/api/hybrid/video_data?url=";
-// PAUSA DEL RESPALDO: pedir hosts nuevos dejó al plugin sin piernas en el
-// teléfono mientras Kino no los apruebe (y jamás pidió aprobarlos). Hasta
-// aclarar eso, el respaldo queda dormido y solo trabajan tikwm y su espejo,
-// que ya están aprobados desde antes.
-const RESPALDO_ACTIVO = false;
+// RESPALDO REENCENDIDO (0.5.1): se usa SOLO para reproducir un video cuando
+// tikwm.com y su espejo rinden. Si Kino bloquea el host douyin.wtf por no
+// estar aprobado, el fallo queda escrito en el informe de "debug" y por fin
+// sabremos CÓMO trata Kino a los hosts sin aprobar (jamás pidió aprobarlos).
+const RESPALDO_ACTIVO = true;
 const TOPE_TERCERO_MS = 12000;
 let trazaRespaldo = "(sin usar aún)";
 
@@ -310,7 +310,7 @@ async function pedirJson(url, timeoutMs, extra) {
           timeoutMs: timeoutMs || 15000
         }).then(function (v) { return { r: v }; }, function (e) { ultimoError = e; return { e: e }; }),
         espera((timeoutMs || 15000) + 500).then(function () {
-          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : "el espejo www.tikwm.com")) };
+          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : "el espejo tikwm.org")) };
         })
       ]);
       const r = (rr && rr.r) ? rr.r : null;
