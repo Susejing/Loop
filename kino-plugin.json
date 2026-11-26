@@ -2,14 +2,13 @@
   "id": "loop",
   "name": "Loop — TikTok",
   "author": "Susejing",
-  "version": "0.5.4",
+  "version": "0.4.3",
   "icon": "icon.png",
   "description": "TikTok en Kino: sección propia con destacado y pestañas llenas: continuar viendo, más de cada tema y canales del gusto. Colores TikTok en el reproductor, doramas en español arriba, insignias (Nuevo, Largo, Español), géneros, categorías de países y temas, perfiles y enlaces. Sin marca de agua.",
   "apiVersion": 11,
   "entry": "plugin.js",
   "hosts": [
     "tikwm.com",
-    "tikwm.org",
     "www.tikwm.com",
     "*.tiktokcdn.com",
     "*.tiktokcdn-us.com",
@@ -85,3 +84,4 @@
   "color": "#FE2C55",
   "debug": true
 }
+

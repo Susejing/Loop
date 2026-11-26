@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.5.4";
+const VERSION = "0.4.3";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -90,97 +90,6 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // nuevo); la portada completa se recuerda 20 minutos.
 const VERIF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PORTADA_CACHE_MS = 20 * 60 * 1000;
-
-// El espejo de tikwm: si el dominio principal no responde (colgado, lento
-// o bloqueando), la misma petición sale por el espejo tikwm.org.
-const BASE_PRINCIPAL = "https://tikwm.com/api/";
-const BASE_ESPEJO = "https://tikwm.org/api/"; // host ya aprobado en el teléfono: SI tikwm.com le cierra la puerta a su IP, el espejo puede tenerla abierta
-
-// EL CARTERO (0.5.3): r.jina.ai es un lector público que recoge la respuesta
-// del sitio que se le pide DESDE SUS PROPIOS servidores y la trae. Si tikwm
-// y su espejo le simulan sordera a la IP del teléfono, el teléfono solo
-// necesita hablar con el cartero (que no tiene pleito con nadie). Va de
-// TERCERA mano y SIN reintento: primero tikwm.com, luego tikwm.org, y solo
-// si ambos rinden sale el cartero (lento la primera vez, rápido de caché).
-const CARTERO = "https://r.jina.ai/";
-
-// ---------- el respaldo experimental (otro servicio, no tikwm) ----------
-// douyin.wtf es un servicio público DISTINTO: si tikwm se rinde en sus dos
-// rutas, jugar un video todavía tiene esta última red. SOLO se usa para
-// REPRODUCIR un video pedido por la persona (portada, canales y memoria
-// siguen en tikwm + semilla + memoria de fila). Es experimental: nunca lo
-// pudimos probar desde el banco de pruebas, así que si falla, falla callado
-// (se ve en el informe de "debug" en la línea «Respaldo»): no rompe nada.
-const BASE_TERCERO = "https://douyin.wtf/api/hybrid/video_data?url=";
-// RESPALDO REENCENDIDO (0.5.1): se usa SOLO para reproducir un video cuando
-// tikwm.com y su espejo rinden. Si Kino bloquea el host douyin.wtf por no
-// estar aprobado, el fallo queda escrito en el informe de "debug" y por fin
-// sabremos CÓMO trata Kino a los hosts sin aprobar (jamás pidió aprobarlos).
-const RESPALDO_ACTIVO = true;
-const TOPE_TERCERO_MS = 12000;
-let trazaRespaldo = "(sin usar aún)";
-
-async function pedidoTercero(url) {
-  const rr = await Promise.race([
-    kino.fetch(url, { method: "GET", headers: { "Accept": "application/json", "User-Agent": UA }, timeoutMs: TOPE_TERCERO_MS }),
-    espera(TOPE_TERCERO_MS + 500).then(function () { throw new Error("el respaldo douyin.wtf no respondió a tiempo"); })
-  ]);
-  if (!rr || !rr.ok) throw new Error("respaldo http " + (rr ? rr.status : "sin respuesta"));
-  let cuerpo = "";
-  try { cuerpo = await rr.text(); } catch (e) { throw new Error("respaldo: respuesta ilegible"); }
-  const t = String(cuerpo || "").trim();
-  if (t.charAt(0) !== "{") throw new Error("respaldo: respuesta no JSON");
-  try { return JSON.parse(t); } catch (e) { throw new Error("respaldo: JSON roto"); }
-}
-
-// Busca en CUALQUIER JSON el enlace del MP4 y los datos del video, sin
-// presuponer la forma de la respuesta: camina el árbol entero y recoge
-// play_addr / download_addr y compañía donde los encuentre.
-function datosDeArbol(j) {
-  const enlaces = [];
-  let titulo = "", autor = "", portada = "", minutos = 0;
-  (function rec(n, prof) {
-    if (!n || typeof n !== "object" || prof > 9) return;
-    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) rec(n[i], prof + 1); return; }
-    if (!titulo && typeof n.desc === "string" && n.desc) titulo = n.desc;
-    if (!titulo && typeof n.title === "string" && n.title) titulo = n.title;
-    if (!minutos && typeof n.duration === "number" && n.duration > 0) minutos = Math.max(1, Math.round((n.duration > 3600 ? n.duration / 1000 : n.duration) / 60));
-    if (!autor && n.author && typeof n.author === "object") {
-      autor = String(n.author.unique_id || n.author.uniqueId || n.author.nickname || "");
-    }
-    const v = n.video;
-    if (v && !Array.isArray(v) && typeof v === "object") {
-      const direcciones = [v.play_addr, v.download_addr, v.play_addr_bytevc1, v.play_addr_h264,
-        (Array.isArray(v.bit_rate) && v.bit_rate[0] && typeof v.bit_rate[0] === "object") ? v.bit_rate[0].play_addr : null];
-      for (let i = 0; i < direcciones.length; i++) {
-        const dir = direcciones[i];
-        if (dir && typeof dir === "object" && Array.isArray(dir.url_list)) {
-          for (let k = 0; k < dir.url_list.length; k++) {
-            if (typeof dir.url_list[k] === "string" && dir.url_list[k].indexOf("http") === 0) enlaces.push(dir.url_list[k]);
-          }
-        }
-      }
-      const c = v.cover || v.origin_cover || v.dynamic_cover;
-      if (!portada && c && typeof c === "object" && Array.isArray(c.url_list) && typeof c.url_list[0] === "string") portada = c.url_list[0];
-    }
-    const claves = Object.keys(n);
-    for (let i = 0; i < claves.length; i++) rec(n[claves[i]], prof + 1);
-  })(j, 0);
-  if (enlaces.length === 0) return null;
-  let enlace = enlaces[0];
-  for (let i = 0; i < enlaces.length; i++) if (/\.mp4/.test(enlaces[i])) { enlace = enlaces[i]; break; }
-  return {
-    play: enlace, wmplay: "", cover: portada, minutos: minutos,
-    title: titulo || "Video de TikTok", author: { unique_id: autor }
-  };
-}
-
-async function porRespaldo(enlace) {
-  const j = await pedidoTercero(BASE_TERCERO + encodeURIComponent(enlace));
-  const d = datosDeArbol(j);
-  if (!d || !d.play || d.play.indexOf("http") !== 0) throw new Error("respaldo: no encontró el enlace del video");
-  return d;
-}
 
 // ---------- diagnóstico (se ve con "debug" en el buscador) ----------
 
@@ -300,75 +209,58 @@ function protegerIds(texto) {
 
 async function pedirJson(url, timeoutMs, extra) {
   let ultimoError = null;
-  // Tres destinos: el dominio principal, el espejo de tikwm y el cartero
-  // (r.jina.ai), que recoge la respuesta desde afuera cuando los dos
-  // primeros le dan la espalda a la IP del teléfono.
-  const urls = [url];
-  if (url.indexOf(BASE_PRINCIPAL) === 0) urls.push(BASE_ESPEJO + url.slice(BASE_PRINCIPAL.length));
-  urls.push(CARTERO + url);
-  for (let u = 0; u < urls.length; u++) {
-    // El cartero va sin reintento: una carta lenta no se re-estampa.
-    const tops = (u >= 2) ? 1 : 2;
-    for (let intento = 0; intento < tops; intento++) {
-      const cabeceras = { "Accept": "application/json", "User-Agent": UA };
-      if (extra && extra["User-Agent"]) cabeceras["User-Agent"] = extra["User-Agent"];
-      if (extra && extra["Cookie"]) cabeceras["Cookie"] = extra["Cookie"];
-      // Tope duro PROPIO: si la petición queda colgada sin responder, se
-      // abandona aquí y se sigue con el reintento o el espejo (una
-      // promesa colgada se comía pantallas enteras: "esperaba a tikwm.com").
-      const rr = await Promise.race([
-        kino.fetch(urls[u], {
-          method: "GET",
-          headers: cabeceras,
-          timeoutMs: timeoutMs || 15000
-        }).then(function (v) { return { r: v }; }, function (e) { ultimoError = e; return { e: e }; }),
-        espera((timeoutMs || 15000) + 500).then(function () {
-          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : (u === 1 ? "el espejo tikwm.org" : "el cartero r.jina.ai"))) };
-        })
-      ]);
-      const r = (rr && rr.r) ? rr.r : null;
-      if (!r) {
-        ultimoError = (rr && rr.e) ? rr.e : ultimoError;
-        if (intento === 0) { await espera(900); continue; }
-        break; // este destino se rinde: el espejo toma la mano
-      }
-      if (!r.ok) {
-        let cuerpo = "";
-        try { cuerpo = await r.text(); } catch (e2) { cuerpo = ""; }
-        const e = new Error("http " + r.status + (cuerpo ? " " + clip(cuerpo, 90) : ""));
-        e.status = r.status;
-        // 429, 5xx y los avisos de verificación valen un reintento.
-        if ((r.status === 429 || r.status >= 500 || /verification|just a moment/i.test(cuerpo)) && intento === 0) {
-          ultimoError = e;
-          await espera(1100);
-          continue;
-        }
-        throw e;
-      }
+  for (let intento = 0; intento < 2; intento++) {
+    const cabeceras = { "Accept": "application/json", "User-Agent": UA };
+    if (extra && extra["User-Agent"]) cabeceras["User-Agent"] = extra["User-Agent"];
+    if (extra && extra["Cookie"]) cabeceras["Cookie"] = extra["Cookie"];
+    const r = await kino.fetch(url, {
+      method: "GET",
+      headers: cabeceras,
+      timeoutMs: timeoutMs || 15000
+    }).catch(function (e) {
+      ultimoError = e;
+      return null;
+    });
+    if (!r) {
+      await espera(900);
+      continue;
+    }
+    if (!r.ok) {
       let cuerpo = "";
-      try {
-        cuerpo = await r.text();
-      } catch (e2) {
-        ultimoError = e2;
-        if (intento === 0) { await espera(900); continue; }
-        throw e2;
-      }
-      const t = cuerpo.trim();
-      if (t.charAt(0) !== "{" && t.charAt(0) !== "[") {
-        // Cloudflare u otra página HTML en lugar del JSON.
-        const e = new Error("respuesta no JSON" + (t ? ": " + clip(t, 70) : " (vacía)"));
-        e.noJson = true;
+      try { cuerpo = await r.text(); } catch (e2) { cuerpo = ""; }
+      const e = new Error("http " + r.status + (cuerpo ? " " + clip(cuerpo, 90) : ""));
+      e.status = r.status;
+      // 429, 5xx y los avisos de verificación valen un reintento.
+      if ((r.status === 429 || r.status >= 500 || /verification|just a moment/i.test(cuerpo)) && intento === 0) {
         ultimoError = e;
-        if (intento === 0) { await espera(1100); continue; }
-        throw e;
+        await espera(1100);
+        continue;
       }
-      try {
-        return JSON.parse(protegerIds(t));
-      } catch (e3) {
-        ultimoError = new Error("JSON ilegible: " + clip(t, 70));
-        if (intento === 0) { await espera(900); continue; }
-        throw ultimoError;
-      }
+      throw e;
+    }
+    let cuerpo = "";
+    try {
+      cuerpo = await r.text();
+    } catch (e2) {
+      ultimoError = e2;
+      if (intento === 0) { await espera(900); continue; }
+      throw e2;
+    }
+    const t = cuerpo.trim();
+    if (t.charAt(0) !== "{" && t.charAt(0) !== "[") {
+      // Cloudflare u otra página HTML en lugar del JSON.
+      const e = new Error("respuesta no JSON" + (t ? ": " + clip(t, 70) : " (vacía)"));
+      e.noJson = true;
+      ultimoError = e;
+      if (intento === 0) { await espera(1100); continue; }
+      throw e;
+    }
+    try {
+      return JSON.parse(protegerIds(t));
+    } catch (e3) {
+      ultimoError = new Error("JSON ilegible: " + clip(t, 70));
+      if (intento === 0) { await espera(900); continue; }
+      throw ultimoError;
     }
   }
   throw ultimoError || new Error("sin respuesta");
@@ -393,17 +285,9 @@ function tkDatos(j, que) {
 // El plan gratuito de tikwm acepta ~1 petición por segundo: cuando avisa
 // del límite, un respiro y una segunda oportunidad.
 async function tkLlamada(que, hacer) {
-  // En apagón, solo los pedidos DIRECTOS de la persona (reproducir un
-  // video) pasan: se les hace caso.
-  if (apagado() && !/^resolve|^enlace|^búsqueda|^busqueda|^search/i.test(que)) {
-    throw new Error("apagón: " + clip(que, 40) + " pospuesto");
-  }
   try {
-    const v = await hacer();
-    anotarAcierto();
-    return v;
+    return await hacer();
   } catch (e) {
-    anotarGolpe(String((e && e.apiMsg) || (e && e.message) || ""));
     const men = String((e && e.apiMsg) || (e && e.message) || "");
     if (/limit/i.test(men)) {
       await espera(1500);
@@ -413,23 +297,17 @@ async function tkLlamada(que, hacer) {
   }
 }
 
-// Desde la 0.5.2 la galleta viaja TAMBIÉN aquí (reproducir): si a tikwm le
-// salió un portero (Cloudflare) para la IP del teléfono, la galleta y el
-// disfraz del navegador son la llave — el portero no pregunta el destino,
-// pregunta en TODAS las puertas.
 async function tkPorEnlace(enlace) {
-  return tkDatos(await pedirJson(BASE + "?url=" + encodeURIComponent(enlace),
-    15000, cabecerasVerificadas()), "video por enlace");
+  return tkDatos(await pedirJson(BASE + "?url=" + encodeURIComponent(enlace)), "video por enlace");
 }
 
-// Tendencias de un país: antes el camino SIN verificación; desde la 0.5.2
-// la galleta viaja también aquí (misma razón que en reproducir).
+// Tendencias de un país: el camino SIN verificación (por eso es la portada).
 async function tkTendencias(region, cursor, cantidad, timeoutMs) {
   return tkDatos(
     await pedirJson(BASE + "feed/list?count=" + cantidad +
       "&region=" + encodeURIComponent(region) +
       "&cursor=" + encodeURIComponent(cursor || "0"),
-      timeoutMs || 15000, cabecerasVerificadas()),
+      timeoutMs || 15000),
     "tendencias " + region
   );
 }
@@ -499,61 +377,6 @@ function cursorSiguiente(d, c) {
 }
 
 // ---------- memoria del plugin ----------
-
-// La fila «Continuar viendo» SOLO cita videos que de verdad se
-// reprodujeron (antes citaba los recién listados: por eso aparecían
-// videos que nadie había puesto). Se guarda en el almacén (30 días).
-var continuar = [];
-var enPrecarga = false;
-function recordarContinuar(id, titulo, cover, autor) {
-  if (!id || enPrecarga) return;
-  continuar = continuar.filter(function (c) { return c.id !== id; });
-  continuar.unshift({ id: id, titulo: titulo || "Video de TikTok", cover: cover || "", autor: autor || "", t: Date.now() });
-  if (continuar.length > 24) continuar = continuar.slice(0, 24);
-  setJson("continuar", continuar, 30 * 24 * 60 * 60 * 1000);
-}
-try {
-  const continuarGuardada = getJson("continuar", null);
-  if (Array.isArray(continuarGuardada)) continuar = continuarGuardada;
-} catch (e) { }
-
-// Los @creadores favoritos: se guardan buscando «guardar @usuario» y se
-// quitan con «quitar @usuario» (o revisándolos con «favoritos»). Salen
-// como fila propia en el Inicio y como pestaña «Mis creadores».
-var favoritos = [];
-try {
-  const favGuardados = getJson("favoritos", null);
-  if (Array.isArray(favGuardados)) favoritos = favGuardados;
-} catch (e) { }
-function favoritosGuardar(uid) {
-  uid = String(uid || "").trim();
-  if (!uid) return;
-  favoritos = favoritos.filter(function (f) { return f.uid !== uid; });
-  favoritos.unshift({ uid: uid, t: Date.now() });
-  if (favoritos.length > 24) favoritos = favoritos.slice(0, 24);
-  setJson("favoritos", favoritos, 0);
-}
-function favoritosQuitar(uid) {
-  uid = String(uid || "").trim();
-  const antes = favoritos.length;
-  favoritos = favoritos.filter(function (f) { return f.uid !== uid; });
-  if (favoritos.length !== antes) setJson("favoritos", favoritos, 0);
-  return favoritos.length !== antes;
-}
-function serieDeFavorito(uid) {
-  return {
-    id: "tk.u." + uid,
-    ref: "u:" + uid,
-    title: "@" + uid,
-    kind: "series",
-    overview: "Canal de este creador: sus últimos videos, uno tras otro."
-  };
-}
-function favoritosCanales() {
-  const canales = [];
-  for (let i = 0; i < favoritos.length; i++) canales.push(serieDeFavorito(favoritos[i].uid));
-  return canales;
-}
 
 // Lo que se sabe de cada video (quién lo subió, su título): al reproducir
 // hay que armar el enlace canónico de TikTok, que lleva el @usuario.
@@ -833,14 +656,7 @@ const TEMAS = [
   { titulo: "Fútbol", tag: "#futbol", genero: ["Deportes", "Fútbol"] },
   { titulo: "Videojuegos", tag: "#gaming", genero: ["Videojuegos"] },
   { titulo: "Recetas", tag: "#recetas", genero: ["Cocina"] },
-  { titulo: "Humor", tag: "#humor", genero: ["Humor"] },
-  { titulo: "Comida", tag: "#comida", genero: ["Comida"] },
-  { titulo: "Cocina", tag: "#cocina", genero: ["Cocina"] },
-  { titulo: "Viajes", tag: "#viajes", genero: ["Viajes"] },
-  { titulo: "Turismo", tag: "#turismo", genero: ["Viajes"] },
-  { titulo: "Deportes", tag: "#deportes", genero: ["Deportes"] },
-  { titulo: "Boxeo", tag: "#boxeo", genero: ["Deportes"] },
-  { titulo: "Mascotas", tag: "#mascotas", genero: ["Mascotas"] }
+  { titulo: "Humor", tag: "#humor", genero: ["Humor"] }
 ];
 
 // El contexto de un tema (sus géneros y si es de español) para los videos
@@ -862,80 +678,6 @@ const REGIONES_CATEGORIAS = REGIONES_PORTADA.concat([
   { id: "cl", titulo: "Tendencias en Chile", region: "CL" }
 ]);
 
-// Un renglón de la portada al almacén, compacto (8 videos con lo mínimo,
-// kind incluido para que el canal siga funcionando): la próxima apertura
-// arranca con lo ya traído aunque el reloj corra.
-// Una fila guardada de antes, para la emergencia (tikwm sin responder).
-function filaDeRespaldo(idFila, items) {
-  let titulo = "Videos guardados";
-  let ref = "";
-  if (idFila === "doramas") { titulo = DORAMAS_FILA.titulo; ref = DORAMAS_FILA.ref; }
-  for (let i = 0; i < REGIONES_PORTADA.length; i++) {
-    if (REGIONES_PORTADA[i].id === idFila) { titulo = REGIONES_PORTADA[i].titulo; ref = "r:" + REGIONES_PORTADA[i].region; }
-  }
-  const fila = { id: "fila." + idFila, title: titulo, items: items, genre: idFila === "doramas" ? "series" : "entretenimiento" };
-  if (ref) fila.ref = ref;
-  return fila;
-}
-
-function guardarFilaEnCache(idFila, items) {
-  try {
-    const compacto = [];
-    for (let i = 0; i < items.length && compacto.length < 8; i++) {
-      const it = items[i];
-      if (!it || !it.ref) continue;
-      compacto.push({ id: it.id, ref: it.ref, title: it.title || "Video de TikTok", kind: "movie", poster: it.poster || "", runtimeMinutes: it.runtimeMinutes || 0 });
-    }
-    if (compacto.length === 0) return;
-    const cf = getJson("portada_filas", {}) || {};
-    cf[idFila] = { t: Date.now(), items: compacto };
-    setJson("portada_filas", cf, 21600000);
-  } catch (e) { }
-}
-
-// La semilla de fábrica: videos verdaderos de TikTok sembrados DENTRO del
-// plugin (25 de noviembre de 2026) para que Loop JAMÁS quede en blanco,
-// ni siquiera recién instalado con el servicio de malas. Se reproducen
-// por el mismo camino de siempre; los pósters son una foto del día de la
-// siembra (pueden envejecer, no pasa nada).
-const SEMILLA_ITEMS = [{"id":"tk.v.7706622473042709791","ref":"v:7706622473042709791","title":"My idea of fun, hangin with my gf getting the yummiest hot coco from @Scoops on Main and a quesadilla from @Qu","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn-us.com/tos-useast8-p-0068-tx2/oM9FTEfEGA8GqzwVEQBvRqADW7QYFKEXDof2bz~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=e6728d2a&x-expires=1795669200&x-signature=RqeeADj7K3pq4WnlfkQo0cGDSqY%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@jennabooher"},{"id":"tk.v.7703231469858147614","ref":"v:7703231469858147614","title":"it’s officially christmas in houston!! 🎄✨ #christmas #houston #texas #holidays #christmaslights","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn-us.com/tos-useast8-p-0068-tx2/o0IAeiiKEsmPb0cME1IyAVqni1ICIkjPB6YViA~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=54365d92&x-expires=1795669200&x-signature=%2Fukoq%2FQ1ufGAha6xqIH6dqm9zmQ%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@rodeomillie"},{"id":"tk.v.7709338322656627988","ref":"v:7709338322656627988","title":"🌪️ The sands have arrived! The Doomsday: Last Survivors × Dune: Part Three collaboration officially begins to","kind":"movie","runtimeMinutes":1,"originalTitle":"@doomsdaylastsurvivor"},{"id":"tk.v.7705827486902258976","ref":"v:7705827486902258976","title":"still with you #seoulvlog #koreavlog #seoulvibe #stillwithyou #seoul","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn-us.com/tos-useast2a-p-0037-euttp/o4QRjmqAJCfHA0KhDDIun8FPG1GBkQf8EME4Fq~tplv-tiktokx-origin.image?dr=8593&refresh_token=daa689e0&x-expires=1795669200&x-signature=oEtrCKEevYH2QT4XFLz8IkyXCZI%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover&item=7705827486902258976","originalTitle":"@the.byzt"},{"id":"tk.v.7706651937634061598","ref":"v:7706651937634061598","title":"karina at Disney World today 💙 #karina #aespa #yujimin","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn-us.com/tos-useast8-p-0068-tx2/o0y4SD8ZIAVsI4AE6EhEULcAxEDRAAFeqzCbbf~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=74fdf9d9&x-expires=1795669200&x-signature=k99alx667Ydgnij5IKL%2FNOrxKss%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&sc=cover&biz_tag=tt_video&s=FEED","originalTitle":"@ketaminjeong01"},{"id":"tk.v.7711637682782276887","ref":"v:7711637682782276887","title":"Meet Ibrahim, aged 12, from Hampshire; Lainey, aged 12, from the Scottish Highlands; Luna, aged eight, from Ke","kind":"movie","runtimeMinutes":1,"originalTitle":"@thebookerprizes"},{"id":"tk.v.7685500879855684877","ref":"v:7685500879855684877","title":"#outfitinspo #falloutfits #fallfashioninspo #fallseason #outfitideas","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn-us.com/tos-useast5-i-photomode-tx/1d2c6f2aeaae44d79ae53de7e357517e~tplv-photomode-image-cover:640:0:q70.webp?dr=12229&refresh_token=287a9b97&x-expires=1796878800&x-signature=aUYsfHn7P9aqMP7eC23LaZgViSw%3D&t=5897f7ec&ps=d5b8ac02&shp=d05b14bd&shcp=1a816805&idc=useast5&s=FEED&biz_tag=tt_photomode&sc=cover","originalTitle":"@a.vision.ary"},{"id":"tk.v.7692989748914294023","ref":"v:7692989748914294023","title":"\"what if i’m younger? i can take care of you better than anyone else\" #teeteepor #twnpich #porsuppakarn #duang","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn-us.com/tos-alisg-p-0037/o89rgDFrGA2ghcGwkIXueWTAL5fGCLNofwXeaR~tplv-tiktokx-shrink_ep:640:640:q78.jpeg?dr=8592&refresh_token=a0aaac8e&x-expires=1795669200&x-signature=psTAB8XrMxGBfCYbLMAMN7yCbtM%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=useast5&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@pwettygzb"},{"id":"tk.v.7695265700255943937","ref":"v:7695265700255943937","title":"Bryan invita a Karla 😮 #bebes #memes","kind":"movie","runtimeMinutes":1,"poster":"https://p19-common-sign.tiktokcdn.com/tos-alisg-p-0037/o4dBsKqILnLDRBzEgmc3xfEkFEARzDythf82AI~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=8a31bed4&x-expires=1795669200&x-signature=LW9Prj%2Fyzh6FQUrm%2B9qBb8ONydU%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&s=FEED&sc=cover&bas=android_sc_bas_pb&biz_tag=tt_video","originalTitle":"@chalinoybryan"},{"id":"tk.v.7711180051663899905","ref":"v:7711180051663899905","title":"@𝑲𝒂𝒕𝒉𝒆 🐈‍⬛ 🙄","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn.com/tos-alisg-p-0037/ocW5QBqB1An2k7xii1BcUAIQCAoDfgcwBIIXor~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=9cfd27f6&x-expires=1795669200&x-signature=9GHyB04QyZLG61obYcJf%2FmpLquQ%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&biz_tag=tt_video&s=FEED&sc=cover&bas=android_sc_bas_pb","originalTitle":"@estebaanlopez"},{"id":"tk.v.7695240029358132511","ref":"v:7695240029358132511","title":"#BalliBotMagos #TredingReels #TredingReels #ForYouPage #FYP #FYP #ViralTikTok #MillionViews #TechMagic #SmartB","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn.com/tos-useast8-p-0068-tx2/osWIefuBIiURUFKFQVTGeQWGghALAtfAnU6rQy~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=a4ed5f38&x-expires=1795669200&x-signature=S5xHzsr2Fj9KVdD8eFJvaNCl9Og%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@usafunny596"},{"id":"tk.v.7702808841376910614","ref":"v:7702808841376910614","title":"DI QUE SI 🎵 #marcaregistrada #grupofrontera #lyrics #fyp #dedicar #amor #diquesi","kind":"movie","runtimeMinutes":1,"poster":"https://p16-common-sign.tiktokcdn.com/tos-no1a-p-0037-no/ocf0ADzDdqewEgET3JHFnCNDCYAk5IVl83kAAF~tplv-tiktokx-shrink_ep:640:640:q78.webp?dr=1346&refresh_token=4306b0fc&x-expires=1795669200&x-signature=5Abh9%2F7SIQCYYXojjHkIdehA2S4%3D&t=bacd0480&ps=933b5bde&shp=d05b14bd&shcp=1a816805&idc=my3&biz_tag=tt_video&s=FEED&sc=cover","originalTitle":"@heyner_18v"}];
-
-function filaSemilla(idFila) {
-  return {
-    id: "fila.semilla." + (idFila || "defecto"),
-    title: "Tendencias de TikTok",
-    items: SEMILLA_ITEMS,
-    genre: "entretenimiento"
-  };
-}
-
-// ---------- el apagón y la ración ----------
-
-// Golpes seguidos = peticiones seguidas que no lograron nada: si se
-// acumulan, el servicio está de malas y el plugin DEJA DE PEDIR por
-// 5 minutos (sirve memoria de filas y la semilla), para no machacar un
-// servidor tímido. Reproducir un video pide de todos modos: la persona
-// mandó, se le hace caso.
-var golpesSeguidos = 0;
-var apagonHasta = 0;
-var ultimoFalloRed = "";
-var rotacionPortada = 0;
-function apagado() { return Date.now() < apagonHasta; }
-function anotarAcierto() {
-  golpesSeguidos = 0;
-  apagonHasta = 0;
-}
-function anotarGolpe(men) {
-  if (/^apagón/.test(String(men || ""))) return; // el apagón no se extiende a sí mismo
-  if (apagonHasta > Date.now()) return; // un apagón en curso no se alarga (los golpes que pasan DENTRO del apagón —cartero, respaldo— no lo estiran; en la 0.5.2 se estiraba solo: 29→32)
-  golpesSeguidos = golpesSeguidos + 1;
-  ultimoFalloRed = clip(String(men || ""), 90);
-  if (golpesSeguidos >= 6) {
-    apagonHasta = Date.now() + 300000;
-    try { kino.log("Loop: apagón de 5 minutos (golpes: " + golpesSeguidos + ", último: " + clip(ultimoFalloRed, 60) + ")"); } catch (e) { }
-  }
-}
-
 export async function home() {
   // La portada completa se recuerda 20 minutos: reabrir la app es
   // instantáneo y el plan gratuito de tikwm recibe menos peticiones.
@@ -945,32 +687,8 @@ export async function home() {
       return enCache.rows;
     }
   } catch (e) { }
-  // Memoria por fila (45 minutos fresca, 1 hora en el almacén): lo ya
-  // traído sirve de una vez; si una apertura no alcanza, lo que faltó
-  // llega en la siguiente. Así el Inicio NUNCA vuelve a pasarse de los
-  // 20 segundos de Kino.
-  const cacheFilas = {};
-  try {
-    const cf = getJson("portada_filas", null);
-    if (cf && typeof cf === "object") for (const k in cf) cacheFilas[k] = cf[k];
-  } catch (e) { }
   const posters = {};
   const progreso = { ok: 0, detalle: [] };
-  // Ración: la fila de doramas SIEMPRE y hasta 4 regiones de red por
-  // apertura (rotando el turno para que todas se refresquen); el resto
-  // sale de la memoria de fila. Son ~5 peticiones por apertura: la
-  // portada se ve LLENA otra vez sin volver a la tormenta de la 0.4.3
-  // (que eran 28) ni al envenenamiento del plan gratuito.
-  let cupos = 4;
-  const pedirAhora = { doramas: true };
-  for (let i = 0; i < REGIONES_PORTADA.length; i++) pedirAhora[REGIONES_PORTADA[i].id] = false;
-  rotacionPortada = (rotacionPortada + 1) % REGIONES_PORTADA.length;
-  for (let i = 0; i < REGIONES_PORTADA.length && cupos > 0; i++) {
-    const fq = REGIONES_PORTADA[(rotacionPortada + i) % REGIONES_PORTADA.length];
-    const enR = cacheFilas[fq.id];
-    const fresco = enR && Array.isArray(enR.items) && enR.items.length > 0 && enR.t && (Date.now() - enR.t) < 2700000;
-    if (!fresco) { pedirAhora[fq.id] = true; cupos--; }
-  }
   // Las filas se piden A LA VEZ, con un escalonado de un segundo entre una
   // y otra (el plan gratuito de tikwm acepta más o menos una petición por
   // segundo: pedidas casi juntas las negaba TODAS con "Free Api Limit"):
@@ -983,11 +701,6 @@ export async function home() {
   // verificación o la respuesta) las tendencias siguen su curso igual.
   pedidas.push((async function (f, retraso) {
     await espera(retraso);
-    try {
-      const enCache = cacheFilas[f.id];
-      if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0 && enCache.t && (Date.now() - enCache.t) < 2700000) return { f: f, items: enCache.items };
-      if (!pedirAhora[f.id]) return { f: f, items: (enCache && Array.isArray(enCache.items)) ? enCache.items : [] };
-    } catch (eC) { }
     try {
       let d = await tkLlamada("fila doramas", function () {
         return tkBuscar(f.tag, "0", 18, 6000);
@@ -1008,7 +721,6 @@ export async function home() {
       if (items.length > 0) {
         // Los doramas doblados se suben en partes largas: los largos primero.
         items = ordenarLargos(items);
-        guardarFilaEnCache(f.id, items);
         progreso.detalle.push("doramas " + items.length);
       } else {
         progreso.detalle.push("doramas vacía");
@@ -1026,17 +738,11 @@ export async function home() {
     pedidas.push((async function (f, retraso) {
       await espera(retraso);
       try {
-        const enCache = cacheFilas[f.id];
-        if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0 && enCache.t && (Date.now() - enCache.t) < 2700000) return { f: f, items: enCache.items };
-        if (!pedirAhora[f.id]) return { f: f, items: (enCache && Array.isArray(enCache.items)) ? enCache.items : [] };
-      } catch (eC) { }
-      try {
         const d = await tkLlamada("portada " + f.region, function () {
           return tkTendencias(f.region, "0", 18, 6000);
         });
         const items = itemsDeVideos(d);
         if (items.length > 0) {
-          guardarFilaEnCache(f.id, items);
           progreso.ok = progreso.ok + 1;
           progreso.detalle.push(f.region + " " + items.length);
         } else {
@@ -1052,28 +758,7 @@ export async function home() {
       }
     })(REGIONES_PORTADA[i], (i + 1) * 1100));
   }
-  // Límite interno de 16 segundos: la app corta el home a los 20. Con lo
-  // que haya llegado se arma la portada (con la memoria por fila, lo que
-  // faltó se completa en la siguiente apertura). Las filas que llegan
-  // después igual quedan guardadas para la próxima.
-  const resultados = [];
-  for (let i = 0; i < pedidas.length; i++) {
-    resultados.push(null);
-    pedidas[i] = pedidas[i].then(function (r) { resultados[i] = r; return r; });
-  }
-  let filas = null;
-  try {
-    filas = await Promise.race([
-      Promise.all(pedidas),
-      espera(16000).then(function () { return null; })
-    ]);
-  } catch (eCorte) {
-    filas = null;
-  }
-  if (filas === null) {
-    filas = [];
-    for (let i = 0; i < resultados.length; i++) if (resultados[i]) filas.push(resultados[i]);
-  }
+  const filas = await Promise.all(pedidas);
   const salida = [];
   let ok = 0;
   for (let i = 0; i < filas.length; i++) {
@@ -1092,16 +777,6 @@ export async function home() {
         genre: f.region ? "entretenimiento" : "series"
       });
     }
-  }
-  // Si la portada quedó coja (pocos videos por memoria fría o servidor
-  // tímido), la fila sembrada aparece de todos modos: el Inicio SIEMPRE
-  // se ve vivo, como en la sensation de la 0.4.3 pero sin su tormenta.
-  const haySemilla = salida.some(function (f) { return String(f.id || "").indexOf(".semilla") >= 0; });
-  if (salida.length < 5 && !haySemilla) {
-    const semPortada = filaSemilla("portada");
-    guardarLista("h:semilla", semPortada.items);
-    salida.splice(1, 0, semPortada);
-    trazaPortada = trazaPortada + "+SEMILLA";
   }
   kino.log("Loop portada: " + trazaPortada);
   // Las tendencias de un país, como canal continuo: una "serie" por país.
@@ -1131,33 +806,9 @@ export async function home() {
     });
   }
   if (salida.length === 0) {
-    // Memoria de emergencia: aunque las filas guardadas estén pasadas de
-    // hora, algo guardado es mejor que el error vacío.
-    const ordenRespaldo = ["doramas", "co", "mx", "us", "es", "ar", "br"];
-    for (let i = 0; i < ordenRespaldo.length; i++) {
-      const enCache = cacheFilas[ordenRespaldo[i]];
-      if (enCache && Array.isArray(enCache.items) && enCache.items.length > 0) {
-        salida.push(filaDeRespaldo(ordenRespaldo[i], enCache.items));
-      }
-    }
-    if (salida.length > 0) {
-      kino.log("Loop portada: memoria de emergencia (" + salida.length + " filas)");
-      trazaPortada = "EMERGENCIA " + trazaPortada;
-    }
-  }
-  if (salida.length === 0) {
-    // Semilla de fábrica: el Inicio JAMÁS se queda en blanco, ni siquiera
-    // recién instalado con el servicio de malas.
-    const sem = filaSemilla("emergencia");
-    guardarLista("h:semilla", sem.items);
-    salida.push(sem);
-    kino.log("Loop portada: SEMILLA de fábrica (" + sem.items.length + " videos)");
-    trazaPortada = "SEMILLA";
-  }
-  const filaFavs = { id: "fila.favoritos", title: "Mis creadores", items: favoritosCanales(), genre: "otros" };
-  if (filaFavs.items.length > 0) {
-    if (salida.length > 1) salida.splice(1, 0, filaFavs);
-    else salida.push(filaFavs);
+    throw kino.error("unavailable", "portada vacía (" + trazaPortada + ")", {
+      userMessage: "TikTok no respondió ahora mismo. Espera un momento y vuelve a abrir la portada."
+    });
   }
   try { setJson("portada_cache", { t: Date.now(), rows: salida }, PORTADA_CACHE_MS); } catch (e) { }
   return salida;
@@ -1197,23 +848,6 @@ const SECCION_TABS = [
     { tag: "#recetas" },
     { tag: "#humor", cursor: "18", titulo: "Más humor" }
   ] },
-  { id: "comida", label: "Comida", filas: [
-    { tag: "#comida" },
-    { tag: "#cocina" },
-    { tag: "#comida", cursor: "18", titulo: "Más comida" }
-  ] },
-  { id: "viajes", label: "Viajes", filas: [
-    { tag: "#viajes" },
-    { tag: "#turismo" },
-    { tag: "#viajes", cursor: "18", titulo: "Más viajes" }
-  ] },
-  { id: "deportes", label: "Deportes", filas: [
-    { tag: "#deportes" },
-    { tag: "#futbol" },
-    { tag: "#boxeo" },
-    { tag: "#deportes", cursor: "18", titulo: "Más deportes" }
-  ] },
-  { id: "favoritos", label: "Mis creadores", favoritos: true },
   { id: "paises", label: "Países", regiones: true }
 ];
 
@@ -1270,12 +904,16 @@ async function filasDeSeccionTemas(tab, filas) {
 // registro las guarda). Tocar uno lo reproduce donde estaba. Solo sale la
 // fila si hay al menos tres.
 function filaContinuar() {
+  const claves = [];
+  for (const id in vistos) claves.push(id);
+  claves.sort(function (a, b) { return (vistos[b].t || 0) - (vistos[a].t || 0); });
   const items = [];
-  for (let i = 0; i < continuar.length && items.length < 12; i++) {
-    const c = continuar[i];
-    const it = { id: "tk.v." + c.id, ref: "v:" + c.id, title: clip(c.titulo || "Video de TikTok", 120), kind: "movie" };
-    if (c.cover && String(c.cover).indexOf("http") === 0) it.poster = c.cover;
-    if (c.autor) it.originalTitle = clip("@" + c.autor, 120);
+  for (let i = 0; i < claves.length && items.length < 12; i++) {
+    const id = claves[i];
+    const v = vistos[id];
+    const it = { id: "tk.v." + id, ref: "v:" + id, title: clip(v.titulo || "Video de TikTok", 120), kind: "movie" };
+    if (v.cover) it.poster = v.cover;
+    if (v.autor) it.originalTitle = clip("@" + v.autor, 120);
     items.push(it);
   }
   return items;
@@ -1300,36 +938,12 @@ export async function section(arg) {
   }
   const rows = [];
   let hero = null;
-  // Memoria de la pestaña (1 hora): si hace poco se armó aquí, no se
-  // pide otra vez (el plan gratuito de tikwm lo agradece).
-  const claveSecCache = "sec_" + tab.id;
-  const secCache = tab.favoritos ? null : getJson(claveSecCache, null);
-  if (secCache && secCache.rows && secCache.rows.length > 1 && secCache.t && (Date.now() - secCache.t) < 3600000) {
-    try { kino.log("Loop sección: memoria (" + tab.label + ")"); } catch (eC) { }
-    const salMem = { tabs: tabs, tab: tab.id, rows: secCache.rows };
-    if (secCache.hero) salMem.hero = secCache.hero;
-    return salMem;
-  }
   // «Continuar viendo»: lo último que se miró, en todas las pestañas.
   const cont = filaContinuar();
-  if (cont.length >= 2) {
+  if (cont.length >= 3) {
     rows.push({ id: "sec.continuar", title: "Continuar viendo", items: cont, genre: "otros" });
   }
-  if (tab.favoritos) {
-    // «Mis creadores»: los @usuarios guardados (sin peticiones a la red).
-    const favs = favoritosCanales();
-    if (favs.length > 0) {
-      rows.push({ id: "sec.favoritos.canales", title: "Mis creadores", items: favs, genre: "otros" });
-    } else {
-      rows.push({
-        id: "sec.favoritos.como",
-        title: "Sin creadores guardados",
-        items: [{ id: "tk.info.favoritos", ref: "v:debugfavoritos", title: "Para guardar uno: busca «guardar @usuario». Para quitarlo: «quitar @usuario».", kind: "movie" }],
-        genre: "otros"
-      });
-    }
-    trazaSeccion = "Mis creadores: " + favs.length + " canales";
-  } else if (tab.regiones) {
+  if (tab.regiones) {
     // «Países»: las tendencias de las OCHO regiones, el camino sin
     // verificación.
     const pedidas = [];
@@ -1344,26 +958,7 @@ export async function section(arg) {
         }
       })(REGIONES_CATEGORIAS[i], i * 1100));
     }
-    // Tope de 16 s: con lo que llegó se arma la pestaña; lo que faltó
-    // queda para la próxima apertura (la memoria por pestaña lo completa).
-    const resultadosSec = [];
-    for (let i = 0; i < pedidas.length; i++) {
-      resultadosSec.push(null);
-      pedidas[i] = pedidas[i].then(function (r) { resultadosSec[i] = r; return r; });
-    }
-    let filas = null;
-    try {
-      filas = await Promise.race([
-        Promise.all(pedidas),
-        espera(16000).then(function () { return null; })
-      ]);
-    } catch (eSecCorte) {
-      filas = null;
-    }
-    if (filas === null) {
-      filas = [];
-      for (let i = 0; i < resultadosSec.length; i++) if (resultadosSec[i]) filas.push(resultadosSec[i]);
-    }
+    const filas = await Promise.all(pedidas);
     for (let i = 0; i < filas.length; i++) {
       const r = filas[i];
       if (r.items.length > 0) {
@@ -1397,19 +992,7 @@ export async function section(arg) {
     // Las filas del gusto, sin repetir videos entre ellas; las «Más X»
     // (segunda página del mismo tema) solo salen si traen al menos tres
     // videos NUEVOS — si tikwm no paginó, la fila se omite sin ruido.
-    let filas = null;
-    try {
-      filas = await Promise.race([
-        filasDeSeccionTemas(tab, tab.filas),
-        espera(16000).then(function () { return null; })
-      ]);
-    } catch (eTemCorte) {
-      filas = null;
-    }
-    if (filas === null) {
-      filas = [];
-      for (let i = 0; i < tab.filas.length; i++) filas.push({ fila: tab.filas[i], items: [] });
-    }
+    const filas = await filasDeSeccionTemas(tab, tab.filas);
     const ids = {};
     for (let i = 0; i < filas.length; i++) {
       const fila = filas[i].fila;
@@ -1447,24 +1030,6 @@ export async function section(arg) {
       rows.push({ id: "sec." + tab.id + ".canales", title: "Canales de este gusto", items: canales, genre: "otros" });
     }
     trazaSeccion = tab.label + ": " + rows.length + " filas (temas y canales)";
-  }
-  if (!tab.favoritos) {
-    const filasConVideos = rows.length - (cont.length >= 2 ? 1 : 0) - 1;
-    if (filasConVideos >= 2) {
-      setJson(claveSecCache, { t: Date.now(), rows: rows, hero: hero }, 3600000);
-    } else if (filasConVideos === 0 && secCache && secCache.rows && secCache.rows.length > 1) {
-      try { kino.log("Loop sección: memoria de emergencia (" + clip(tab.label, 30) + ")"); } catch (eEmer) { }
-      const salEmer = { tabs: tabs, tab: tab.id, rows: secCache.rows };
-      if (secCache.hero) salEmer.hero = secCache.hero;
-      trazaSeccion = "EMERGENCIA " + trazaSeccion;
-      kino.log("Loop sección: " + trazaSeccion);
-      return salEmer;
-    } else if (filasConVideos === 0) {
-      // Sin videos y sin memoria: la semilla de fábrica da siempre algo
-      // que ver (los canales del gusto cierran la pestaña).
-      rows.push(filaSemilla(tab.id));
-      trazaSeccion = "SEMILLA " + trazaSeccion;
-    }
   }
   kino.log("Loop sección: " + trazaSeccion);
   const salida = { tabs: tabs, tab: tab.id, rows: rows };
@@ -1575,33 +1140,6 @@ export async function search(query) {
 
   const qLower = q.toLowerCase();
   if (qLower === "debug" || qLower === "estado") return informeDebug();
-
-  // Creadores favoritos: «guardar @usuario», «quitar @usuario» o «favoritos».
-  const mGuardar = qLower.match(/^guardar\s+@?([a-z0-9._]{1,30})$/);
-  if (mGuardar) {
-    favoritosGuardar(mGuardar[1]);
-    return avisoDebug(
-      "✔ @" + mGuardar[1] + " guardado en Mis creadores. Saldrá como fila en el Inicio y en la pestaña «Mis creadores».",
-      favoritos.length + " creador(es) en total. Para quitarlo: busca «quitar @" + mGuardar[1] + "»."
-    );
-  }
-  const mQuitar = qLower.match(/^quitar\s+@?([a-z0-9._]{1,30})$/);
-  if (mQuitar) {
-    const salio = favoritosQuitar(mQuitar[1]);
-    const lista = favoritos.length ? favoritos.map(function (f) { return "@" + f.uid; }).join(", ") : "(ninguno aún)";
-    return avisoDebug(
-      salio ? ("✔ @" + mQuitar[1] + " quitado de Mis creadores.") : ("@" + mQuitar[1] + " no estaba en Mis creadores."),
-      "Tus creadores: " + lista
-    );
-  }
-  if (qLower === "favoritos" || qLower === "mis creadores") {
-    const canales = favoritosCanales();
-    if (canales.length > 0) return canales;
-    return avisoDebug(
-      "Todavía no tienes creadores guardados.",
-      "Entra al perfil (@usuario) para verlo bien, y luego busca «guardar @usuario» con el nombre del creador."
-    );
-  }
 
   // Página siguiente de la misma búsqueda.
   if (cursor) {
@@ -1869,7 +1407,7 @@ export async function episodes(ref) {
 
 // ---------- resolución: el corazón ----------
 
-export async function resolve(ref, opciones) {
+export async function resolve(ref) {
   let s = String(ref || "");
   if (s.indexOf("v:") === 0) s = s.slice(2);
   if (s.indexOf("e:") === 0) s = s.slice(2);
@@ -1886,7 +1424,6 @@ export async function resolve(ref, opciones) {
     "https://m.tiktok.com/v/" + s + ".html"
   ];
   let d = null;
-  let viaRespaldo = false;
   let ultimoError = null;
   for (let i = 0; i < candidatos.length; i++) {
     try {
@@ -1897,18 +1434,6 @@ export async function resolve(ref, opciones) {
       }
     } catch (e) {
       ultimoError = e;
-    }
-  }
-  if (!d) {
-    // ÚLTIMA RED: el respaldo experimental (douyin.wtf, un servicio
-    // distinto). Solo se armó para reproducción: si tikwm y su espejo
-    // rinden, aquí está la última mano antes de rendirse con el video.
-    try {
-      if (!RESPALDO_ACTIVO) throw new Error("respaldo pausado (experimento dormido)");
-      const t = await tkLlamada("resolve respaldo", function () { return porRespaldo(candidatos[0]); });
-      if (t && (t.play || t.wmplay)) { d = t; viaRespaldo = true; trazaRespaldo = "FUNCIONÓ (video " + clip(s, 12) + ")"; }
-    } catch (eT) {
-      trazaRespaldo = clip(String((eT && eT.message) || "fallo"), 90);
     }
   }
   if (!d) {
@@ -1934,14 +1459,9 @@ export async function resolve(ref, opciones) {
       userMessage: "Este video no tiene enlace de reproducción ahora mismo. Prueba con otro."
     });
   }
-  // Este video sí se está reproduciendo de verdad: entra a «Continuar
-  // viendo». La precarga (prepare) pasa con noRecordar y no cuenta.
-  if (!(opciones && opciones.noRecordar)) {
-    recordarContinuar(s, clip(String(d.title || (v ? v.titulo : "")), 120), String(d.cover || ""), autorNuevo || autor);
-  }
   const stream = { url: url, mime: "video/mp4" };
   stream.label = (url === sinMarca && sinMarca && !conMarca) ? "TikTok sin marca de agua" : "TikTok";
-  trazaResolve = (viaRespaldo ? "respaldo: " : "tikwm: ") + stream.label + " (" + clip(String(d.title || ""), 40) + ")";
+  trazaResolve = "tikwm: " + stream.label + " (" + clip(String(d.title || ""), 40) + ")";
   ultimoResolve = { label: stream.label, titulo: clip(String(d.title || ""), 60) };
   return stream;
 }
@@ -1951,7 +1471,7 @@ export async function resolve(ref, opciones) {
 // al instante. Como los enlaces de TikTok expiran en horas, esto se hace
 // al momento de listar, nunca mucho tiempo antes.
 export async function prepare(ref) {
-  try { return await resolve(ref, { noRecordar: true }); } catch (e) { return null; }
+  try { return await resolve(ref); } catch (e) { return null; }
 }
 
 // ---------- estado en Ajustes ----------
@@ -2035,18 +1555,6 @@ export async function action(key) {
   return null;
 }
 
-// Mensajes informativos como resultados de búsqueda (no se reproducen):
-// el mismo truco del informe técnico, para respuestas cortas.
-function avisoDebug(linea1, linea2) {
-  const lineas = [String(linea1 || "")];
-  if (linea2) lineas.push(String(linea2));
-  const items = [];
-  for (let i = 0; i < lineas.length; i++) {
-    items.push({ id: "tk.info." + Date.now() + "." + i, ref: "v:debuginfo." + i, title: clip(lineas[i], 110), kind: "movie" });
-  }
-  return items;
-}
-
 // El informe técnico como resultados de búsqueda: cada línea es un
 // resultado, así nada se corta (el Estado de Ajustes se corta en 200).
 function informeDebug() {
@@ -2063,10 +1571,7 @@ function informeDebug() {
   lineas.push("Búsqueda: " + (trazaBusqueda || "(aún no se ha buscado)"));
   lineas.push("Reproducción: " + (trazaResolve || "(nada reproducido desde la actualización)"));
   lineas.push("Videos recordados: " + Object.keys(vistos).length + " (para enlaces y canales)");
-  lineas.push("Continuar viendo (videos reproducidos): " + continuar.length);
   lineas.push("Listas en memoria: " + Object.keys(cacheListas).length + " (filas, búsquedas, perfiles)");
-  lineas.push("Red: " + (apagado() ? "EN APAGÓN hasta " + new Date(apagonHasta).toISOString().slice(11, 19) : "normal") + ", golpes seguidos: " + golpesSeguidos + ", último fallo: " + (ultimoFalloRed || "ninguno"));
-  lineas.push("Respaldo experimental (douyin.wtf): " + trazaRespaldo);
   const items = [];
   for (let i = 0; i < lineas.length; i++) {
     let resto = lineas[i];
