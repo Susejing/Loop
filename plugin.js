@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.4.8";
+const VERSION = "0.4.9";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -931,11 +931,12 @@ export async function home() {
   } catch (e) { }
   const posters = {};
   const progreso = { ok: 0, detalle: [] };
-  // Ración: la fila de doramas siempre; MÁXIMO 2 regiones de red por
-  // apertura (rotando para que todas se refresquen con el tiempo); el
-  // resto sale de la memoria de fila. Así son ~3 peticiones por apertura,
-  // no 28: al plan gratuito de tikwm se le hace la vida fácil.
-  let cupos = 2;
+  // Ración: la fila de doramas SIEMPRE y hasta 4 regiones de red por
+  // apertura (rotando el turno para que todas se refresquen); el resto
+  // sale de la memoria de fila. Son ~5 peticiones por apertura: la
+  // portada se ve LLENA otra vez sin volver a la tormenta de la 0.4.3
+  // (que eran 28) ni al envenenamiento del plan gratuito.
+  let cupos = 4;
   const pedirAhora = { doramas: true };
   for (let i = 0; i < REGIONES_PORTADA.length; i++) pedirAhora[REGIONES_PORTADA[i].id] = false;
   rotacionPortada = (rotacionPortada + 1) % REGIONES_PORTADA.length;
@@ -1066,6 +1067,16 @@ export async function home() {
         genre: f.region ? "entretenimiento" : "series"
       });
     }
+  }
+  // Si la portada quedó coja (pocos videos por memoria fría o servidor
+  // tímido), la fila sembrada aparece de todos modos: el Inicio SIEMPRE
+  // se ve vivo, como en la sensation de la 0.4.3 pero sin su tormenta.
+  const haySemilla = salida.some(function (f) { return String(f.id || "").indexOf(".semilla") >= 0; });
+  if (salida.length < 5 && !haySemilla) {
+    const semPortada = filaSemilla("portada");
+    guardarLista("h:semilla", semPortada.items);
+    salida.splice(1, 0, semPortada);
+    trazaPortada = trazaPortada + "+SEMILLA";
   }
   kino.log("Loop portada: " + trazaPortada);
   // Las tendencias de un país, como canal continuo: una "serie" por país.
