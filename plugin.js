@@ -82,7 +82,7 @@
 //   del límite del plan gratuito, se espera y se reintenta una vez.
 // — "debug" (o "estado") en el buscador muestra el informe técnico.
 
-const VERSION = "0.5.2";
+const VERSION = "0.5.3";
 const BASE = "https://tikwm.com/api/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -95,6 +95,14 @@ const PORTADA_CACHE_MS = 20 * 60 * 1000;
 // o bloqueando), la misma petición sale por el espejo tikwm.org.
 const BASE_PRINCIPAL = "https://tikwm.com/api/";
 const BASE_ESPEJO = "https://tikwm.org/api/"; // host ya aprobado en el teléfono: SI tikwm.com le cierra la puerta a su IP, el espejo puede tenerla abierta
+
+// EL CARTERO (0.5.3): r.jina.ai es un lector público que recoge la respuesta
+// del sitio que se le pide DESDE SUS PROPIOS servidores y la trae. Si tikwm
+// y su espejo le simulan sordera a la IP del teléfono, el teléfono solo
+// necesita hablar con el cartero (que no tiene pleito con nadie). Va de
+// TERCERA mano y SIN reintento: primero tikwm.com, luego tikwm.org, y solo
+// si ambos rinden sale el cartero (lento la primera vez, rápido de caché).
+const CARTERO = "https://r.jina.ai/";
 
 // ---------- el respaldo experimental (otro servicio, no tikwm) ----------
 // douyin.wtf es un servicio público DISTINTO: si tikwm se rinde en sus dos
@@ -292,11 +300,16 @@ function protegerIds(texto) {
 
 async function pedirJson(url, timeoutMs, extra) {
   let ultimoError = null;
-  // Dos destinos: el dominio principal y, si se rinde, el espejo de tikwm.
+  // Tres destinos: el dominio principal, el espejo de tikwm y el cartero
+  // (r.jina.ai), que recoge la respuesta desde afuera cuando los dos
+  // primeros le dan la espalda a la IP del teléfono.
   const urls = [url];
   if (url.indexOf(BASE_PRINCIPAL) === 0) urls.push(BASE_ESPEJO + url.slice(BASE_PRINCIPAL.length));
+  urls.push(CARTERO + url);
   for (let u = 0; u < urls.length; u++) {
-    for (let intento = 0; intento < 2; intento++) {
+    // El cartero va sin reintento: una carta lenta no se re-estampa.
+    const tops = (u >= 2) ? 1 : 2;
+    for (let intento = 0; intento < tops; intento++) {
       const cabeceras = { "Accept": "application/json", "User-Agent": UA };
       if (extra && extra["User-Agent"]) cabeceras["User-Agent"] = extra["User-Agent"];
       if (extra && extra["Cookie"]) cabeceras["Cookie"] = extra["Cookie"];
@@ -310,7 +323,7 @@ async function pedirJson(url, timeoutMs, extra) {
           timeoutMs: timeoutMs || 15000
         }).then(function (v) { return { r: v }; }, function (e) { ultimoError = e; return { e: e }; }),
         espera((timeoutMs || 15000) + 500).then(function () {
-          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : "el espejo tikwm.org")) };
+          return { e: ultimoError || new Error("sin respuesta de " + (u === 0 ? "tikwm.com" : (u === 1 ? "el espejo tikwm.org" : "el cartero r.jina.ai"))) };
         })
       ]);
       const r = (rr && rr.r) ? rr.r : null;
@@ -914,6 +927,7 @@ function anotarAcierto() {
 }
 function anotarGolpe(men) {
   if (/^apagón/.test(String(men || ""))) return; // el apagón no se extiende a sí mismo
+  if (apagonHasta > Date.now()) return; // un apagón en curso no se alarga (los golpes que pasan DENTRO del apagón —cartero, respaldo— no lo estiran; en la 0.5.2 se estiraba solo: 29→32)
   golpesSeguidos = golpesSeguidos + 1;
   ultimoFalloRed = clip(String(men || ""), 90);
   if (golpesSeguidos >= 6) {
